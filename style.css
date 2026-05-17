@@ -764,6 +764,12 @@ textarea:focus { border-color: var(--gold); background: #fff; }
 }
 .ovdist-link:hover { background: var(--gold); color: var(--navy); }
 .ovdist-na { font-size: 0.73rem; color: var(--text-light); }
+.ovdist-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.ovdist-badge {
+  font-size: 0.72rem; font-weight: 700; color: #2d7a4f;
+  background: #e8f5ee; padding: 2px 8px; border-radius: 50px; white-space: nowrap;
+}
+.ovdist-badge.ovdist-calc { color: var(--text-muted); background: var(--cream); font-weight: 400; }
 
 /* ── RENTAL ANALYSIS BAND ───────────────────────────────────────────────── */
 .ov-rental-band { }

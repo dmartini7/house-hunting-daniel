@@ -3,10 +3,49 @@
 // ── CONSTANTS ────────────────────────────────────────────────────────────────
 
 const KEY_LOCATIONS = [
-  { name: 'Mindiola Soccer Park',   addr: 'Mindiola Park, Waukesha, WI',         icon: '⚽' },
-  { name: 'Mosh Performance',       addr: 'Mosh Performance, Franklin, WI',       icon: '💪' },
-  { name: 'Pewaukee Beach',         addr: 'Pewaukee Beach, Pewaukee, WI',          icon: '🏖️' },
+  { name: 'Mindiola Soccer Park',   addr: 'Mindiola Park, Waukesha, WI',         icon: '⚽', lat: 43.0250, lon: -88.2315 },
+  { name: 'Mosh Performance',       addr: 'Mosh Performance, Franklin, WI',       icon: '💪', lat: 42.8894, lon: -88.0168 },
+  { name: 'Pewaukee Beach',         addr: 'Pewaukee Beach, Pewaukee, WI',          icon: '🏖️', lat: 43.0791, lon: -88.2566 },
 ];
+
+// Drive time cache: { "address": { locName: { minutes, miles } } }
+const _driveCache = {};
+
+async function geocodeAddress(address) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=us`;
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data[0]) return null;
+    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+  } catch(e) { return null; }
+}
+
+async function fetchDriveTimes(propAddress) {
+  if (!propAddress) return null;
+  if (_driveCache[propAddress]) return _driveCache[propAddress];
+  const origin = await geocodeAddress(propAddress);
+  if (!origin) return null;
+  const results = {};
+  for (const loc of KEY_LOCATIONS) {
+    try {
+      const osrm = `https://router.project-osrm.org/route/v1/driving/${origin.lon},${origin.lat};${loc.lon},${loc.lat}?overview=false`;
+      const res  = await fetch(osrm);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const route = data.routes?.[0];
+      if (route) {
+        results[loc.name] = {
+          minutes: Math.round(route.duration / 60),
+          miles:   Math.round(route.distance / 1609.34 * 10) / 10,
+        };
+      }
+    } catch(e) { continue; }
+  }
+  _driveCache[propAddress] = results;
+  return results;
+}
 
 const STATUS_LABELS = {
   active:  'Active',
@@ -300,20 +339,86 @@ function parseZillow(html) {
 
 function parseRedfin(html) {
   try {
+    // Try legacy reactData path
     const m = html.match(/root\.__reactData\s*=\s*({[\s\S]*?});\s*(?:window|root|<)/);
-    if (!m) return parseGenericMeta(html);
-    const data = JSON.parse(m[1]);
-    const l = data?.root?.listing || data?.listing || data?.homeData;
-    if (!l) return parseGenericMeta(html);
-    return {
-      address:      [l.streetLine?.value, l.city, l.state, l.zip].filter(Boolean).join(', '),
-      price:        l.price?.value    || l.listingPrice?.value,
-      beds:         l.beds,
-      baths:        l.baths,
-      sqft:         l.sqFt?.value,
-      yearBuilt:    l.yearBuilt?.value,
-      propertyType: 'duplex',
-    };
+    if (m) {
+      try {
+        const data = JSON.parse(m[1]);
+        const l = data?.root?.listing || data?.listing || data?.homeData;
+        if (l?.price?.value) {
+          return {
+            address:      [l.streetLine?.value, l.city, l.state, l.zip].filter(Boolean).join(', '),
+            price:        l.price?.value || l.listingPrice?.value,
+            beds:         l.beds,  baths: l.baths,
+            sqft:         l.sqFt?.value, yearBuilt: l.yearBuilt?.value,
+            propertyType: 'duplex',
+          };
+        }
+      } catch(e) {}
+    }
+
+    // Modern Redfin: extract from og:description + embedded JSON
+    const get = (re) => html.match(re)?.[1]?.trim();
+    const desc  = get(/property="og:description"\s+content="([^"]+)"/) ||
+                  get(/"og:description","content":"([^"]+)"/) || '';
+    const title = get(/property="og:title"\s+content="([^"]+)"/) ||
+                  get(/"og:title","content":"([^"]+)"/) || '';
+
+    // Price: from embedded JSON first, then meta tag, then og:description
+    const priceRaw = html.match(/"price"\s*:\s*(\d+)/)?.[1] ||
+                     html.match(/content="\$([0-9,]+)"/)?.[1] ||
+                     desc.match(/\$([0-9,]+)/)?.[1] || '';
+    const price = Number((priceRaw || '').replace(/,/g, '')) || 0;
+
+    // Beds / baths / sqft from og:description: "4 beds, 3 baths, 1963 sq. ft."
+    const beds  = Number(desc.match(/(\d+)\s*bed/i)?.[1]  || title.match(/(\d+)\s*bed/i)?.[1]  || 0);
+    const baths = Number(desc.match(/(\d+\.?\d*)\s*bath/i)?.[1] || 0);
+    const sqft  = Number((desc.match(/([0-9,]+)\s*sq\.?\s*ft/i)?.[1] || '').replace(/,/g, '') || 0);
+
+    // Year built from JSON blobs in the page
+    const year  = Number(html.match(/"yearBuilt"\s*:\s*(\d{4})/)?.[1] ||
+                         html.match(/Year\s*Built[^\d]*(\d{4})/i)?.[1] || 0);
+
+    // Property type from og:description
+    const typeStr = desc.toLowerCase();
+    const propertyType = typeStr.includes('duplex') || typeStr.includes('multi-family') ? 'duplex'
+                       : typeStr.includes('triplex') ? 'triplex'
+                       : typeStr.includes('quadplex') || typeStr.includes('quad') ? 'fourplex'
+                       : 'duplex';
+
+    // Address from og:title: "3261 S Austin St, Milwaukee, WI 53207 - 4 beds/3 baths"
+    const address = (title.split(' - ')[0] || title).trim();
+
+    // Notes from description
+    const notes = desc ? desc.slice(0, 600) : '';
+
+    // Days on market + tax from JSON
+    const dom     = Number(html.match(/"daysOnMarket"\s*:\s*(\d+)/)?.[1] || 0);
+    const taxAnnual = Number(html.match(/"taxesDue"\s*:\s*"?\$?([0-9,]+)"?/)?.[1]?.replace(/,/g,'') ||
+                             html.match(/"annualTaxAmount"\s*:\s*([0-9.]+)/)?.[1] || 0);
+
+    if (!price && !beds) return parseGenericMeta(html);
+
+    const result = { propertyType };
+    if (address)    result.address    = address;
+    if (price)      result.price      = price;
+    if (beds)       result.beds       = beds;
+    if (baths)      result.baths      = baths;
+    if (sqft)       result.sqft       = sqft;
+    if (year)       result.yearBuilt  = year;
+    if (dom)        result.dom        = dom;
+    if (taxAnnual)  result.taxAnnual  = taxAnnual;
+    if (notes)      result.notes      = notes;
+
+    const numU = numUnitsForType(propertyType);
+    result.units = Array.from({ length: numU }, (_, i) => ({
+      label: i === 0 ? 'Unit 1 (Owner)' : `Unit ${i+1} (Rental)`,
+      beds:  i === 0 ? Math.ceil(beds / numU)  : Math.floor(beds / numU),
+      baths: i === 0 ? Math.ceil(baths / numU) : Math.floor(baths / numU),
+      sqft:  Math.round((sqft || 0) / numU), rent: 0,
+    }));
+
+    return result;
   } catch(e) { return parseGenericMeta(html); }
 }
 
@@ -957,20 +1062,31 @@ function renderOverview(p) {
       </div>
     </div>`;
 
+  const cached = p.address ? (_driveCache[p.address] || null) : null;
+
   const distancesHTML = `
     <div class="ov-section-card">
       <div class="ov-section-title">📍 Drive Times</div>
-      ${KEY_LOCATIONS.map(loc => `
+      ${KEY_LOCATIONS.map(loc => {
+        const dt = cached?.[loc.name];
+        const dtBadge = dt
+          ? `<span class="ovdist-badge">${dt.minutes} min · ${dt.miles} mi</span>`
+          : p.address ? `<span class="ovdist-badge ovdist-calc" id="dt-${loc.name.replace(/\s/g,'_')}">Calculating…</span>` : '';
+        return `
         <div class="ovdist-row">
           <span class="ovdist-icon">${loc.icon}</span>
           <div class="ovdist-info">
             <div class="ovdist-name">${loc.name}</div>
             <div class="ovdist-addr">${loc.addr}</div>
           </div>
-          ${p.address
-            ? `<a class="ovdist-link" href="${mapUrl(p.address, loc.addr)}" target="_blank" rel="noopener">Get Directions ↗</a>`
-            : `<span class="ovdist-na">Add address</span>`}
-        </div>`).join('')}
+          <div class="ovdist-right">
+            ${dtBadge}
+            ${p.address
+              ? `<a class="ovdist-link" href="${mapUrl(p.address, loc.addr)}" target="_blank" rel="noopener">Directions ↗</a>`
+              : `<span class="ovdist-na">Add address</span>`}
+          </div>
+        </div>`;
+      }).join('')}
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div class="ovbr-row">
           <span class="ovbr-label">🎓 School District</span>
@@ -990,6 +1106,21 @@ function renderOverview(p) {
         </div>
       </div>
     </div>`;
+
+  // Kick off drive time fetch if not cached yet
+  if (p.address && !cached) {
+    fetchDriveTimes(p.address).then(times => {
+      if (!times) return;
+      KEY_LOCATIONS.forEach(loc => {
+        const dt  = times[loc.name];
+        const el2 = document.getElementById(`dt-${loc.name.replace(/\s/g,'_')}`);
+        if (el2 && dt) {
+          el2.textContent = `${dt.minutes} min · ${dt.miles} mi`;
+          el2.classList.remove('ovdist-calc');
+        }
+      });
+    });
+  }
 
   // ── RENTAL ANALYSIS BAND ──────────────────────────────────────────────────
   const breakEven = exp.total / Math.max((p.units||[]).length - 1, 1);
