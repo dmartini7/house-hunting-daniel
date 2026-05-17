@@ -111,24 +111,101 @@ function extractFromURL(url) {
   return {};
 }
 
-// Async — fetches page via proxy and extracts structured data
+// Fetch via proxy — tries allorigins first, corsproxy.io as fallback
+async function proxyGet(targetUrl, wantJson = false, timeout = 16000) {
+  const proxies = [
+    { url: `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, json: true },
+    { url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, json: false },
+  ];
+  for (const p of proxies) {
+    try {
+      const ctrl  = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeout);
+      const res   = await fetch(p.url, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const text = p.json ? (await res.json()).contents : await res.text();
+      if (text && text.length > 100) return text;
+    } catch(e) { continue; }
+  }
+  return null;
+}
+
+// Map Redfin API listing payload → app schema
+function mapRedfinListing(l) {
+  if (!l) return null;
+  const addr  = [l.streetLine?.value, l.city, l.state, l.zip].filter(Boolean).join(', ');
+  const price = Number(l.price?.value || l.listingPrice?.value || 0);
+  const beds  = Number(l.beds  || 0);
+  const baths = Number(l.baths || 0);
+  const sqft  = Number(l.sqFt?.value || 0);
+  const year  = Number(l.yearBuilt?.value || 0);
+  const tax   = Number(l.taxHistory?.[0]?.value || l.annualTax || 0);
+  const typeStr = (l.propertyType || '').toLowerCase();
+  const propertyType = typeStr.includes('duplex') || typeStr.includes('multi') ? 'duplex'
+                     : typeStr.includes('triplex')  ? 'triplex'
+                     : typeStr.includes('quad')     ? 'fourplex'
+                     : 'duplex';
+  const result = { propertyType };
+  if (addr)  result.address   = addr;
+  if (price) result.price     = price;
+  if (beds)  result.beds      = beds;
+  if (baths) result.baths     = baths;
+  if (sqft)  result.sqft      = sqft;
+  if (year)  result.yearBuilt = year;
+  if (tax)   result.taxAnnual = tax;
+  if (l.description) result.notes = l.description.slice(0, 600);
+  if (l.schools?.[0]?.name) result.schoolDistrict = l.schools[0].name;
+  const numU = numUnitsForType(propertyType);
+  result.units = Array.from({ length: numU }, (_, i) => ({
+    label: i === 0 ? 'Unit 1 (Owner)' : `Unit ${i+1} (Rental)`,
+    beds:  i === 0 ? Math.ceil(beds / numU)  : Math.floor(beds / numU),
+    baths: i === 0 ? Math.ceil(baths / numU) : Math.floor(baths / numU),
+    sqft:  Math.round((sqft || 0) / numU),
+    rent: 0,
+  }));
+  return result;
+}
+
+// Async — fetches listing data via proxy and extracts structured data
 async function fetchListingData(url) {
-  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 18000);
-    const res = await fetch(proxyUrl, { signal: ctrl.signal });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const json = await res.json();
-    const html = json.contents || '';
-    if (!html || html.length < 200) return null;
-    if (url.includes('zillow.com'))  return parseZillow(html)   || parseGenericMeta(html);
-    if (url.includes('redfin.com'))  return parseRedfin(html)   || parseGenericMeta(html);
-    if (url.includes('realtor.com')) return parseRealtor(html)  || parseGenericMeta(html);
-    if (url.includes('flexmls.com') || isMlsFeedUrl(url)) return parseFlexMLS(html) || parseGenericMeta(html);
-    return parseGenericMeta(html);
-  } catch(e) { return null; }
+  // ── Redfin: use internal JSON API (bypasses bot protection) ───────────────
+  if (url.includes('redfin.com')) {
+    const propId = url.match(/\/home\/(\d+)/)?.[1];
+    if (propId) {
+      const apiUrl = `https://www.redfin.com/stingray/api/home/details/aboveTheFold?propertyId=${propId}&accessLevel=1`;
+      const text = await proxyGet(apiUrl);
+      if (text) {
+        try {
+          const jsonStr = text.includes('&&') ? text.slice(text.indexOf('&&') + 2) : text;
+          const data    = JSON.parse(jsonStr);
+          const mapped  = mapRedfinListing(data.payload?.listing);
+          if (mapped) return mapped;
+        } catch(e) {}
+      }
+    }
+    // Fallback: try HTML parsing
+    const html = await proxyGet(url);
+    return html ? (parseRedfin(html) || parseGenericMeta(html)) : null;
+  }
+
+  // ── Zillow: __NEXT_DATA__ JSON embedded in HTML ────────────────────────────
+  if (url.includes('zillow.com')) {
+    const html = await proxyGet(url);
+    return html ? (parseZillow(html) || parseGenericMeta(html)) : null;
+  }
+
+  // ── Realtor.com ────────────────────────────────────────────────────────────
+  if (url.includes('realtor.com')) {
+    const html = await proxyGet(url);
+    return html ? (parseRealtor(html) || parseGenericMeta(html)) : null;
+  }
+
+  // ── FlexMLS / MLS / unknown ────────────────────────────────────────────────
+  const html = await proxyGet(url);
+  if (!html) return null;
+  if (url.includes('flexmls.com') || isMlsFeedUrl(url)) return parseFlexMLS(html) || parseGenericMeta(html);
+  return parseGenericMeta(html);
 }
 
 const PROP_TYPE_MAP = {
