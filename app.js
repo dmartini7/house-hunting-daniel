@@ -119,12 +119,22 @@ function isBotChallenge(text) {
          (text.includes('Cloudflare') && text.length < 8000);
 }
 
-// Fetch via proxy — tries allorigins first, corsproxy.io as fallback
+// Worker URL saved by user after deploying their Cloudflare Worker
+function getWorkerUrl() {
+  return localStorage.getItem('hh_cf_worker') || '';
+}
+
+// Fetch via proxy — tries CF Worker first (if set), then free proxies
 async function proxyGet(targetUrl, timeout = 10000) {
-  const proxies = [
+  const workerUrl = getWorkerUrl();
+  const proxies = [];
+  if (workerUrl) {
+    proxies.push({ url: `${workerUrl}?url=${encodeURIComponent(targetUrl)}`, json: false });
+  }
+  proxies.push(
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, json: true },
     { url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, json: false },
-  ];
+  );
   for (const p of proxies) {
     try {
       const ctrl  = new AbortController();
@@ -134,12 +144,11 @@ async function proxyGet(targetUrl, timeout = 10000) {
       if (!res.ok) continue;
       const text = p.json ? (await res.json()).contents : await res.text();
       if (!text || text.length < 100) continue;
-      if (isBotChallenge(text)) continue; // blocked — skip to next proxy
+      if (isBotChallenge(text)) continue;
       return text;
     } catch(e) { continue; }
   }
-  return null;
-}
+  return null;}
 
 // Map Redfin API listing payload → app schema
 function mapRedfinListing(l) {
@@ -1101,6 +1110,56 @@ window.tryAltUrl = async function(propId) {
   }
 };
 
+// ── PROXY SETUP ───────────────────────────────────────────────────────────────
+
+window.saveProxyUrl = async function() {
+  const input  = el('proxy-worker-url');
+  const status = el('proxy-test-status');
+  let url = (input?.value || '').trim().replace(/\/$/, '');
+  if (!url) return;
+  if (!url.startsWith('http')) url = 'https://' + url;
+
+  status.textContent = 'Testing connection…';
+  status.className = 'proxy-test-status loading';
+
+  try {
+    const testUrl = `${url}?url=${encodeURIComponent('https://httpbin.org/get')}`;
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 8000);
+    const res  = await fetch(testUrl, { signal: ctrl.signal });
+    const text = await res.text();
+    if (res.ok && text.includes('httpbin')) {
+      localStorage.setItem('hh_cf_worker', url);
+      status.textContent = 'Worker connected! Auto-read is now active for Redfin & Zillow.';
+      status.className = 'proxy-test-status success';
+      updateProxyDisplay();
+    } else {
+      status.textContent = 'Connected but unexpected response — double-check the Worker code.';
+      status.className = 'proxy-test-status error';
+    }
+  } catch(e) {
+    status.textContent = 'Could not reach that URL. Make sure the Worker is deployed and the URL is correct.';
+    status.className = 'proxy-test-status error';
+  }
+};
+
+function updateProxyDisplay() {
+  const saved = getWorkerUrl();
+  const el2   = el('proxy-current-display');
+  if (!el2) return;
+  el2.textContent = saved ? `Active worker: ${saved}` : '';
+  el2.style.display = saved ? 'block' : 'none';
+}
+
+window.openProxySetup = function() {
+  const saved = getWorkerUrl();
+  const inp = el('proxy-worker-url');
+  if (inp && saved) inp.value = saved;
+  updateProxyDisplay();
+  el('proxy-test-status').textContent = '';
+  el('proxy-modal-overlay').classList.remove('hidden');
+};
+
 window.saveAssumptions = function() {
   const p = state.properties.find(x => x.id === state.activeId);
   if (!p) return;
@@ -1757,6 +1816,7 @@ function init() {
   // URL bar
   el('url-input').addEventListener('keydown', e => { if (e.key === 'Enter') doAnalyze(); });
   el('analyze-btn').addEventListener('click', doAnalyze);
+  el('setup-proxy-btn').addEventListener('click', window.openProxySetup);
 
   async function doAnalyze() {
     const url = el('url-input').value.trim();

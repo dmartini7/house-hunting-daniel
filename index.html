@@ -27,7 +27,34 @@
       <button id="analyze-btn" class="btn-gold">+ Analyze</button>
     </div>
     <button class="btn-ghost" id="compare-toggle-btn">⇄ Compare</button>
+    <button class="btn-ghost btn-setup" id="setup-proxy-btn" title="Setup auto-read proxy">⚙</button>
   </header>
+
+  <!-- ── PROXY SETUP MODAL ── -->
+  <div class="modal-overlay hidden" id="proxy-modal-overlay">
+    <div class="modal-box proxy-modal-box">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="proxy-modal-title">Setup Auto-Read Proxy</div>
+          <div class="modal-sub">One-time setup — makes Redfin &amp; Zillow auto-fill work</div>
+        </div>
+        <button class="modal-close" onclick="document.getElementById('proxy-modal-overlay').classList.add('hidden')">✕</button>
+      </div>
+      <div class="proxy-steps">
+        <div class="proxy-step"><span class="proxy-step-num">1</span><span>Go to <strong>cloudflare.com</strong> → sign up free (no credit card needed)</span></div>
+        <div class="proxy-step"><span class="proxy-step-num">2</span><span>Click <strong>Workers &amp; Pages</strong> → <strong>Create</strong> → <strong>Create Worker</strong></span></div>
+        <div class="proxy-step"><span class="proxy-step-num">3</span><span>Name it <strong>house-proxy</strong> → click <strong>Deploy</strong></span></div>
+        <div class="proxy-step"><span class="proxy-step-num">4</span><span>Click <strong>Edit code</strong> → select all → paste the code from <code>worker.js</code> in your project folder → <strong>Deploy</strong></span></div>
+        <div class="proxy-step"><span class="proxy-step-num">5</span><span>Copy your Worker URL (looks like <code>house-proxy.yourname.workers.dev</code>) and paste it below:</span></div>
+      </div>
+      <div class="proxy-input-row">
+        <input type="text" id="proxy-worker-url" placeholder="https://house-proxy.yourname.workers.dev" />
+        <button class="btn-gold" onclick="saveProxyUrl()">Save &amp; Test</button>
+      </div>
+      <div id="proxy-test-status" class="proxy-test-status"></div>
+      <div class="proxy-current" id="proxy-current-display"></div>
+    </div>
+  </div>
 
   <!-- ── LAYOUT ── -->
   <div class="app-layout">
