@@ -59,12 +59,20 @@ const RENTAL_RESEARCH_LINKS = (address) => {
 // ── LISTING FETCH & PARSE ─────────────────────────────────────────────────────
 
 function detectPlatform(url) {
-  if (url.includes('zillow.com'))  return 'Zillow';
-  if (url.includes('redfin.com'))  return 'Redfin';
-  if (url.includes('realtor.com')) return 'Realtor.com';
-  if (url.includes('homes.com'))   return 'Homes.com';
-  if (url.includes('trulia.com'))  return 'Trulia';
-  return 'listing';
+  if (url.includes('zillow.com'))   return 'Zillow';
+  if (url.includes('redfin.com'))   return 'Redfin';
+  if (url.includes('realtor.com'))  return 'Realtor.com';
+  if (url.includes('homes.com'))    return 'Homes.com';
+  if (url.includes('trulia.com'))   return 'Trulia';
+  if (url.includes('flexmls.com'))  return 'FlexMLS';
+  if (url.includes('mlsfeeds'))     return 'MLS Feed';
+  if (url.includes('showmojo.com')) return 'ShowMojo';
+  return 'MLS listing';
+}
+
+function isMlsFeedUrl(url) {
+  return url.includes('flexmls.com') || url.includes('newsfeed') ||
+         url.includes('mlsfeeds') || url.includes('notification_id');
 }
 
 // Synchronous — extracts what we can from the URL slug alone
@@ -381,7 +389,7 @@ function defaultProperty(url) {
     lot: '',
     dom: '',
     price: 0,
-    downPct: 20,
+    downPct: 5,
     rate: 7.0,
     term: 30,
     taxAnnual: 0,
@@ -611,15 +619,91 @@ function renderOverview(p) {
   const cfSign   = (n) => n >= 0 ? '+' : '';
   const repColor = rep > 20000 ? '#c94c4c' : rep > 8000 ? '#c9862c' : '#2d7a4f';
 
-  // ── Missing data banner ────────────────────────────────────────────────────
+  // ── Inline Quick-Fill (shown whenever address OR price is missing) ──────────
+  const allUnitsRent = (p.units || []).slice(1).reduce((s, u) => s + (Number(u.rent) || 0), 0);
   const missingBanner = hasMissingData ? `
-    <div class="missing-banner">
-      <span>⚠️</span>
-      <div>
-        <strong>Fill in property details to complete the analysis.</strong>
-        <span> Click <b>Edit</b> above or use the <b>Financials</b> tab to enter price, taxes, and rental income.</span>
+    <div class="quick-fill-panel">
+      <div class="qf-header">
+        <span class="qf-icon">🏡</span>
+        <div>
+          <div class="qf-title">Enter Property Details</div>
+          <div class="qf-sub">Fill in what you know — the analysis updates instantly.</div>
+        </div>
       </div>
+      <div class="qf-grid">
+        <div class="fg qf-full"><label>Address</label>
+          <input type="text" id="qf-address" value="${p.address || ''}" placeholder="123 Oak St, Waukesha, WI 53188" />
+        </div>
+        <div class="fg"><label>Asking Price</label>
+          <div class="inp-pre"><span>$</span><input type="number" id="qf-price" value="${p.price || ''}" placeholder="350000" /></div>
+        </div>
+        <div class="fg"><label>Property Type</label>
+          <select id="qf-type">
+            <option value="duplex"   ${p.propertyType==='duplex'   ?'selected':''}>Duplex (2 units)</option>
+            <option value="triplex"  ${p.propertyType==='triplex'  ?'selected':''}>Triplex (3 units)</option>
+            <option value="fourplex" ${p.propertyType==='fourplex' ?'selected':''}>Fourplex (4 units)</option>
+            <option value="single"   ${p.propertyType==='single'   ?'selected':''}>Single Family</option>
+          </select>
+        </div>
+        <div class="fg"><label>Beds</label>
+          <input type="number" id="qf-beds" value="${p.beds || ''}" placeholder="4" />
+        </div>
+        <div class="fg"><label>Baths</label>
+          <input type="number" id="qf-baths" value="${p.baths || ''}" placeholder="2" step="0.5" />
+        </div>
+        <div class="fg"><label>Sq Ft</label>
+          <input type="number" id="qf-sqft" value="${p.sqft || ''}" placeholder="2400" />
+        </div>
+        <div class="fg"><label>Year Built</label>
+          <input type="number" id="qf-year" value="${p.yearBuilt || ''}" placeholder="1985" />
+        </div>
+        <div class="fg"><label>Annual Taxes</label>
+          <div class="inp-pre"><span>$</span><input type="number" id="qf-tax" value="${p.taxAnnual || ''}" placeholder="4500" /></div>
+        </div>
+        <div class="fg"><label>Est. Monthly Rent (Unit 2)</label>
+          <div class="inp-pre"><span>$</span><input type="number" id="qf-rent" value="${allUnitsRent || ''}" placeholder="1400" /></div>
+        </div>
+        <div class="fg"><label>School District</label>
+          <input type="text" id="qf-school" value="${p.schoolDistrict || ''}" placeholder="e.g. Waukesha School District" />
+        </div>
+      </div>
+      <button class="btn-gold btn-full" onclick="saveQuickFill()">→ Run Full Analysis</button>
     </div>` : '';
+
+  // ── FINANCIAL ASSUMPTIONS BAR — always visible, always editable ──────────
+  const assumptionsBar = `
+    <div class="assumptions-bar">
+      <span class="assum-label">📐 Assumptions</span>
+      <div class="assum-field">
+        <label>Down Payment</label>
+        <div class="assum-inp-wrap">
+          <input type="number" id="assum-down" value="${p.downPct || 5}" min="0" max="100" step="1" oninput="liveRecalc()" />
+          <span>%</span>
+        </div>
+      </div>
+      <div class="assum-field">
+        <label>Rate</label>
+        <div class="assum-inp-wrap">
+          <input type="number" id="assum-rate" value="${p.rate || 7}" step="0.125" oninput="liveRecalc()" />
+          <span>%</span>
+        </div>
+      </div>
+      <div class="assum-field">
+        <label>Rent / Unit 2</label>
+        <div class="assum-inp-wrap">
+          <span>$</span>
+          <input type="number" id="assum-rent" value="${allUnitsRent || ''}" placeholder="1400" oninput="liveRecalc()" />
+        </div>
+      </div>
+      <div class="assum-field">
+        <label>Annual Tax</label>
+        <div class="assum-inp-wrap">
+          <span>$</span>
+          <input type="number" id="assum-tax" value="${p.taxAnnual || ''}" placeholder="4500" oninput="liveRecalc()" />
+        </div>
+      </div>
+      <button class="assum-save-btn" onclick="saveAssumptions()">Save ✓</button>
+    </div>`;
 
   // ── QUICK STATS BAND ───────────────────────────────────────────────────────
   const statsBand = `
@@ -772,10 +856,97 @@ function renderOverview(p) {
       ${p.notes ? `<div style="font-size:0.83rem;color:var(--text-muted);white-space:pre-wrap">${p.notes.slice(0,300)}${p.notes.length>300?'…':''}</div>` : ''}
     </div>` : '';
 
-  el('tab-overview').innerHTML = missingBanner + statsBand +
+  el('tab-overview').innerHTML = missingBanner + assumptionsBar + statsBand +
     `<div class="ov-two-col">${breakdown}${distancesHTML}</div>` +
     rentalBand + researchRow + notesPreview;
 }
+
+// ── QUICK FILL & LIVE ASSUMPTION SAVE ────────────────────────────────────────
+
+window.saveQuickFill = function() {
+  const p = state.properties.find(x => x.id === state.activeId);
+  if (!p) return;
+  const v = (id) => el(id)?.value?.trim();
+  const n = (id) => Number(el(id)?.value) || 0;
+
+  if (v('qf-address')) p.address      = v('qf-address');
+  if (n('qf-price'))   p.price        = n('qf-price');
+  const type = v('qf-type');
+  if (type) {
+    p.propertyType = type;
+    const numU = numUnitsForType(type);
+    while (p.units.length < numU)
+      p.units.push({ label: `Unit ${p.units.length+1} (Rental)`, beds:'', baths:'', sqft:'', rent: 0 });
+    p.units = p.units.slice(0, numU);
+  }
+  if (v('qf-beds'))    p.beds         = v('qf-beds');
+  if (v('qf-baths'))   p.baths        = v('qf-baths');
+  if (v('qf-sqft'))    p.sqft         = v('qf-sqft');
+  if (v('qf-year'))    p.yearBuilt    = v('qf-year');
+  if (n('qf-tax'))     p.taxAnnual    = n('qf-tax');
+  if (v('qf-school'))  p.schoolDistrict = v('qf-school');
+  const rent = n('qf-rent');
+  if (rent && p.units.length > 1) p.units[1].rent = rent;
+
+  p.updatedAt = new Date().toISOString();
+  save();
+  renderPropertyDetail();
+  renderSidebar();
+  showToast('Analysis updated! 🎉');
+};
+
+window.saveAssumptions = function() {
+  const p = state.properties.find(x => x.id === state.activeId);
+  if (!p) return;
+  const down = Number(el('assum-down')?.value);
+  const rate = Number(el('assum-rate')?.value);
+  const rent = Number(el('assum-rent')?.value);
+  const tax  = Number(el('assum-tax')?.value);
+  if (!isNaN(down)) p.downPct   = down;
+  if (!isNaN(rate)) p.rate      = rate;
+  if (!isNaN(tax) && tax)  p.taxAnnual = tax;
+  if (!isNaN(rent) && rent && p.units.length > 1) p.units[1].rent = rent;
+  p.updatedAt = new Date().toISOString();
+  save();
+  renderPropertyDetail();
+  renderSidebar();
+  showToast('Assumptions saved.');
+};
+
+// Live recalc — updates numbers while typing without saving
+window.liveRecalc = function() {
+  const p = state.properties.find(x => x.id === state.activeId);
+  if (!p) return;
+  const draft = { ...p };
+  const down = Number(el('assum-down')?.value);
+  const rate = Number(el('assum-rate')?.value);
+  const rent = Number(el('assum-rent')?.value);
+  const tax  = Number(el('assum-tax')?.value);
+  if (!isNaN(down)) draft.downPct = down;
+  if (!isNaN(rate)) draft.rate    = rate;
+  if (!isNaN(tax) && tax) draft.taxAnnual = tax;
+  if (!isNaN(rent) && rent && draft.units?.length > 1) {
+    draft.units = draft.units.map((u, i) => i === 1 ? { ...u, rent } : u);
+  }
+  // Just re-render the stats band and rental section inline
+  const cf  = calcCashFlow(draft);
+  const rep = calcRepairTotal(draft);
+  const cfColor = (n) => n > 100 ? '#2d7a4f' : n > -200 ? '#c9862c' : '#c94c4c';
+  const cfSign  = (n) => n >= 0 ? '+' : '';
+  const band = document.querySelector('.qs-band');
+  if (!band) return;
+  const boxes = band.querySelectorAll('.qs-box');
+  if (boxes[0]) boxes[0].querySelector('.qs-num').textContent = draft.price ? fmt$(cf.exp.total) : '—';
+  if (boxes[1]) {
+    boxes[1].querySelector('.qs-num').style.color = cfColor(cf.currentCF);
+    boxes[1].querySelector('.qs-num').textContent = draft.price ? cfSign(cf.currentCF)+fmt$(cf.currentCF)+'/mo' : '—';
+    boxes[1].querySelector('.qs-sub').textContent = cf.grossRent > 0 ? `Rental covers ${fmt$(cf.grossRent)}/mo` : 'Add rental income estimate';
+  }
+  if (boxes[2]) {
+    boxes[2].querySelector('.qs-num').style.color = cfColor(cf.fullCF);
+    boxes[2].querySelector('.qs-num').textContent = draft.price ? cfSign(cf.fullCF)+fmt$(cf.fullCF)+'/mo' : '—';
+  }
+};
 
 // ── FINANCIALS TAB ────────────────────────────────────────────────────────────
 
@@ -1416,6 +1587,16 @@ function init() {
     // Background fetch from the listing site
     if (badge) { badge.textContent = `⏳ Reading from ${platform}…`; badge.classList.remove('hidden'); }
     el('analyze-btn').disabled = true;
+
+    // MLS feed/notification links can't be auto-read — tell them to use quick fill
+    if (isMlsFeedUrl(url)) {
+      setTimeout(() => {
+        if (badge) badge.classList.add('hidden');
+        el('analyze-btn').disabled = false;
+        showToast('MLS feed link detected — fill in property details below ↓', 'warn');
+      }, 1200);
+      return;
+    }
 
     try {
       const fetched = await fetchListingData(url);
