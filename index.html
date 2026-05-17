@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>House Hunting — Daniel & Ana 2026</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── HEADER ── -->
+  <header class="app-header">
+    <div class="header-brand">
+      <span class="header-icon">🏡</span>
+      <div class="header-text">
+        <h1>House Hunting</h1>
+        <span class="header-sub">Daniel &amp; Ana · Wisconsin 2026</span>
+      </div>
+    </div>
+    <div class="url-bar-wrap">
+      <input type="text" id="url-input" placeholder="Paste a Zillow, Redfin, or Realtor.com listing URL and press Enter…" />
+      <button id="analyze-btn" class="btn-gold">+ Analyze</button>
+    </div>
+    <button class="btn-ghost" id="compare-toggle-btn">⇄ Compare</button>
+  </header>
+
+  <!-- ── LAYOUT ── -->
+  <div class="app-layout">
+
+    <!-- ── SIDEBAR ── -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-heading">
+          <span>Properties</span>
+          <span class="count-badge" id="prop-count">0</span>
+        </div>
+        <select id="filter-status" class="filter-select">
+          <option value="all">All</option>
+          <option value="active">Active</option>
+          <option value="offer">Offer Made</option>
+          <option value="pending">Pending</option>
+          <option value="passed">Passed</option>
+          <option value="closed">Closed ✓</option>
+        </select>
+      </div>
+      <div class="prop-list" id="prop-list">
+        <div class="sidebar-empty" id="sidebar-empty">
+          <div style="font-size:2.5rem;margin-bottom:10px;">🏘️</div>
+          <p>No properties yet.<br/>Paste a listing URL above to get started.</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── MAIN ── -->
+    <main class="main-content" id="main-content">
+
+      <!-- DASHBOARD -->
+      <div id="view-dashboard">
+        <div class="dashboard-hero">
+          <div class="hero-left">
+            <div class="hero-eyebrow">Your 2026 Home Search · Wisconsin</div>
+            <h2 class="hero-title">Find the Perfect<br/><em>Duplex to Grow Into</em></h2>
+            <p class="hero-desc">Track every listing, analyze the numbers, and find a home where you live in one unit and build equity on the other.</p>
+            <div class="hero-stats" id="hero-stats">
+              <div class="hstat"><span class="hstat-n" id="hs-total">0</span><span class="hstat-l">Saved</span></div>
+              <div class="hstat"><span class="hstat-n" id="hs-active">0</span><span class="hstat-l">Active</span></div>
+              <div class="hstat"><span class="hstat-n" id="hs-offers">0</span><span class="hstat-l">Offers</span></div>
+              <div class="hstat"><span class="hstat-n" id="hs-avg">—</span><span class="hstat-l">Avg Price</span></div>
+            </div>
+          </div>
+          <div class="hero-right">🔑</div>
+        </div>
+        <div class="dashboard-grid" id="dashboard-grid">
+          <div class="add-card" id="add-first-card">
+            <div class="add-card-icon">+</div>
+            <div class="add-card-label">Add First Property</div>
+            <div class="add-card-hint">Paste a listing URL in the bar above</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- COMPARE VIEW -->
+      <div id="view-compare" class="hidden">
+        <div class="view-header">
+          <button class="back-btn" id="compare-back-btn">← Back</button>
+          <h2>Compare Properties</h2>
+        </div>
+        <div id="compare-content">
+          <p class="muted-text">Select properties from the sidebar to compare.</p>
+          <div id="compare-table-wrap"></div>
+        </div>
+      </div>
+
+      <!-- PROPERTY DETAIL -->
+      <div id="view-property" class="hidden">
+        <div class="prop-detail-header">
+          <button class="back-btn" id="detail-back-btn">← Dashboard</button>
+          <div class="prop-title-area">
+            <span class="status-badge" id="d-status-badge">Active</span>
+            <h2 class="prop-address" id="d-address">Property Address</h2>
+            <div class="prop-meta-row">
+              <span class="price-tag" id="d-price">$—</span>
+              <span class="meta-chip" id="d-type">Duplex</span>
+              <span class="meta-chip" id="d-bedbath">—</span>
+              <span class="meta-chip" id="d-sqft">—</span>
+              <span class="meta-chip" id="d-year">—</span>
+            </div>
+            <div class="star-row" id="d-stars-display">
+              <span class="star" data-v="1">★</span><span class="star" data-v="2">★</span>
+              <span class="star" data-v="3">★</span><span class="star" data-v="4">★</span>
+              <span class="star" data-v="5">★</span>
+            </div>
+          </div>
+          <div class="prop-actions">
+            <a id="d-listing-link" href="#" target="_blank" class="btn-outline" rel="noopener">View Listing ↗</a>
+            <button class="btn-ghost" id="d-edit-btn">Edit</button>
+            <select id="d-status-select" class="status-select">
+              <option value="active">Active</option>
+              <option value="offer">Offer Made</option>
+              <option value="pending">Pending</option>
+              <option value="passed">Passed</option>
+              <option value="closed">Closed ✓</option>
+            </select>
+            <button class="btn-danger-sm" id="d-delete-btn">✕</button>
+          </div>
+        </div>
+
+        <!-- TABS -->
+        <div class="tab-nav" id="tab-nav">
+          <button class="tab-btn active" data-tab="overview">Overview</button>
+          <button class="tab-btn" data-tab="financials">Financials</button>
+          <button class="tab-btn" data-tab="repairs">Repairs</button>
+          <button class="tab-btn" data-tab="location">Location</button>
+          <button class="tab-btn" data-tab="rentability">Rentability</button>
+          <button class="tab-btn" data-tab="notes">Notes</button>
+        </div>
+
+        <div class="tab-body">
+
+          <!-- OVERVIEW -->
+          <div class="tab-pane active" id="tab-overview">
+            <div class="overview-grid">
+              <div class="card key-numbers-card">
+                <div class="card-title">Key Numbers</div>
+                <div class="kn-grid" id="kn-grid"></div>
+              </div>
+              <div class="card">
+                <div class="card-title">Distances to Your Locations</div>
+                <div id="ov-distances"></div>
+              </div>
+              <div class="card">
+                <div class="card-title">Analysis Summary</div>
+                <div id="ov-summary"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- FINANCIALS -->
+          <div class="tab-pane hidden" id="tab-financials">
+            <div class="fin-layout">
+              <div class="card fin-inputs-card">
+                <div class="card-title">Purchase Scenario</div>
+                <div class="form-grid-2">
+                  <div class="fg"><label>Asking Price</label><div class="inp-pre"><span>$</span><input type="number" id="fi-price" /></div></div>
+                  <div class="fg"><label>Down Payment</label><div class="inp-suf"><input type="number" id="fi-down" /><span>%</span></div></div>
+                  <div class="fg"><label>Interest Rate</label><div class="inp-suf"><input type="number" id="fi-rate" step="0.125" /><span>%</span></div></div>
+                  <div class="fg"><label>Loan Term</label><select id="fi-term"><option value="30">30 yr</option><option value="20">20 yr</option><option value="15">15 yr</option></select></div>
+                  <div class="fg"><label>Annual Taxes</label><div class="inp-pre"><span>$</span><input type="number" id="fi-tax" /></div></div>
+                  <div class="fg"><label>Annual Insurance</label><div class="inp-pre"><span>$</span><input type="number" id="fi-insurance" /></div></div>
+                  <div class="fg"><label>HOA / Month</label><div class="inp-pre"><span>$</span><input type="number" id="fi-hoa" /></div></div>
+                  <div class="fg"><label>Rental Income / Mo</label><div class="inp-pre"><span>$</span><input type="number" id="fi-rent" /></div></div>
+                </div>
+                <button class="btn-gold btn-full" id="fi-recalc-btn">Recalculate</button>
+              </div>
+              <div class="fin-results">
+                <div class="card">
+                  <div class="card-title">Monthly Breakdown</div>
+                  <div id="fi-breakdown"></div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Scenarios</div>
+                  <div id="fi-scenarios"></div>
+                </div>
+                <div class="card">
+                  <div class="card-title">5-Year Equity Projection</div>
+                  <div id="fi-projection"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- REPAIRS -->
+          <div class="tab-pane hidden" id="tab-repairs">
+            <div class="repairs-layout">
+              <div class="card repairs-main-card">
+                <div class="card-title">Property Condition Assessment</div>
+                <p class="card-sub">Rate each major system and enter your repair/replacement cost estimate.</p>
+                <table class="repairs-table" id="repairs-table">
+                  <thead><tr><th>System</th><th>Age / Notes</th><th>Condition</th><th>Est. Cost</th></tr></thead>
+                  <tbody id="repairs-tbody"></tbody>
+                </table>
+                <div class="repairs-other-section">
+                  <div class="card-title" style="margin-top:0">Additional Items</div>
+                  <div id="other-items"></div>
+                  <button class="btn-outline btn-sm" id="add-other-btn">+ Add Item</button>
+                </div>
+                <div class="repairs-total-bar">
+                  <span>TOTAL ESTIMATED REPAIRS</span>
+                  <span class="repairs-total-num" id="repairs-total">$0</span>
+                </div>
+                <button class="btn-gold btn-full" id="save-repairs-btn">Save Repairs</button>
+              </div>
+              <div class="repairs-sidebar">
+                <div class="card">
+                  <div class="card-title">Cost Breakdown</div>
+                  <div id="repairs-breakdown"></div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Effective Purchase Price</div>
+                  <div id="effective-price-box"></div>
+                </div>
+                <div class="card cost-guide-card">
+                  <div class="card-title">WI Cost Guide</div>
+                  <ul class="cost-guide">
+                    <li><b>Roof</b>: $8K–$20K</li>
+                    <li><b>HVAC / Furnace</b>: $5K–$15K</li>
+                    <li><b>Water Heater</b>: $1K–$3K</li>
+                    <li><b>Windows (full)</b>: $8K–$20K</li>
+                    <li><b>Kitchen remodel</b>: $15K–$50K</li>
+                    <li><b>Bathroom</b>: $8K–$20K each</li>
+                    <li><b>Foundation</b>: $3K–$30K+</li>
+                    <li><b>Electrical panel</b>: $2K–$5K</li>
+                    <li><b>Plumbing (major)</b>: $2K–$15K</li>
+                    <li><b>Flooring (full)</b>: $5K–$20K</li>
+                    <li><b>Siding/Exterior</b>: $8K–$25K</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LOCATION -->
+          <div class="tab-pane hidden" id="tab-location">
+            <div class="location-layout">
+              <div class="card">
+                <div class="card-title">Location Details</div>
+                <div class="form-grid-1">
+                  <div class="fg"><label>School District</label><input type="text" id="loc-school" placeholder="e.g., Waukesha School District" /></div>
+                  <div class="fg"><label>Neighborhood Notes</label><textarea id="loc-notes" rows="4" placeholder="Describe the area, what you noticed, proximity to things you care about…"></textarea></div>
+                </div>
+                <button class="btn-gold" id="save-loc-btn">Save Location Info</button>
+              </div>
+              <div class="card">
+                <div class="card-title">Research Tools</div>
+                <div id="research-links"></div>
+              </div>
+              <div class="card">
+                <div class="card-title">Drive Times to Your Key Spots</div>
+                <div id="loc-distances"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RENTABILITY -->
+          <div class="tab-pane hidden" id="tab-rentability">
+            <div class="rent-layout">
+              <div class="card">
+                <div class="card-title">Unit Configuration</div>
+                <div id="rent-units"></div>
+              </div>
+              <div class="card">
+                <div class="card-title">Cash Flow Analysis</div>
+                <div class="rent-scenarios-grid" id="rent-cashflow"></div>
+              </div>
+              <div class="card">
+                <div class="card-title">Market Research Links</div>
+                <div id="rent-research-links"></div>
+              </div>
+              <div class="card">
+                <div class="card-title">Comparable Properties</div>
+                <table class="comps-table" id="comps-table">
+                  <thead><tr><th>Address</th><th>Sale Price</th><th>Sq Ft</th><th>$/SqFt</th><th>Annual Tax</th><th>Notes</th><th></th></tr></thead>
+                  <tbody id="comps-tbody"></tbody>
+                </table>
+                <button class="btn-outline btn-sm" id="add-comp-btn">+ Add Comparable</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- NOTES -->
+          <div class="tab-pane hidden" id="tab-notes">
+            <div class="notes-layout">
+              <div class="card"><div class="card-title">Pros ✅</div><textarea id="n-pros" rows="5" placeholder="What do you love about this property?"></textarea></div>
+              <div class="card"><div class="card-title">Cons ⚠️</div><textarea id="n-cons" rows="5" placeholder="What concerns you?"></textarea></div>
+              <div class="card notes-full-card"><div class="card-title">Notes</div><textarea id="n-notes" rows="8" placeholder="Observations, questions, next steps, what Ana thinks…"></textarea></div>
+              <div class="card">
+                <div class="card-title">Overall Rating</div>
+                <div class="star-input-row" id="star-input">
+                  <span class="si" data-v="1">★</span><span class="si" data-v="2">★</span>
+                  <span class="si" data-v="3">★</span><span class="si" data-v="4">★</span>
+                  <span class="si" data-v="5">★</span>
+                </div>
+              </div>
+              <button class="btn-gold btn-full" id="save-notes-btn">Save Notes</button>
+            </div>
+          </div>
+
+        </div><!-- /tab-body -->
+      </div><!-- /view-property -->
+
+    </main>
+  </div><!-- /app-layout -->
+</div><!-- /app -->
+
+<!-- ── ADD / EDIT MODAL ── -->
+<div class="modal-overlay hidden" id="modal-overlay">
+  <div class="modal" id="modal">
+    <div class="modal-head">
+      <div>
+        <h3 id="modal-title">Add Property</h3>
+        <p class="modal-sub" id="modal-sub">Step 1 of 4 — Basic Info</p>
+      </div>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+
+    <!-- STEP DOTS -->
+    <div class="step-dots">
+      <div class="sdot active" data-s="0"><span class="snum">1</span><span class="slbl">Basic</span></div>
+      <div class="sdot-line"></div>
+      <div class="sdot" data-s="1"><span class="snum">2</span><span class="slbl">Financial</span></div>
+      <div class="sdot-line"></div>
+      <div class="sdot" data-s="2"><span class="snum">3</span><span class="slbl">Units</span></div>
+      <div class="sdot-line"></div>
+      <div class="sdot" data-s="3"><span class="snum">4</span><span class="slbl">Condition</span></div>
+    </div>
+
+    <div class="modal-body">
+      <!-- STEP 1: BASIC INFO -->
+      <div class="mstep active" id="mstep-0">
+        <div class="form-grid-2">
+          <div class="fg full-width"><label>Listing URL</label><input type="url" id="m-url" placeholder="https://www.zillow.com/homedetails/…" /></div>
+          <div class="fg full-width"><label>Full Address</label><input type="text" id="m-address" placeholder="123 Oak St, Waukesha, WI 53188" /></div>
+          <div class="fg"><label>Property Type</label>
+            <select id="m-type">
+              <option value="duplex">Duplex (2 units)</option>
+              <option value="triplex">Triplex (3 units)</option>
+              <option value="fourplex">Fourplex (4 units)</option>
+              <option value="single">Single Family</option>
+            </select>
+          </div>
+          <div class="fg"><label>Year Built</label><input type="number" id="m-year" placeholder="1985" /></div>
+          <div class="fg"><label>Total Beds</label><input type="number" id="m-beds" placeholder="4" /></div>
+          <div class="fg"><label>Total Baths</label><input type="number" id="m-baths" placeholder="2" step="0.5" /></div>
+          <div class="fg"><label>Total Sq Ft</label><input type="number" id="m-sqft" placeholder="2400" /></div>
+          <div class="fg"><label>Lot Size</label><input type="text" id="m-lot" placeholder="0.25 acres" /></div>
+          <div class="fg"><label>Asking Price</label><div class="inp-pre"><span>$</span><input type="number" id="m-price" placeholder="350000" /></div></div>
+          <div class="fg"><label>Days on Market</label><input type="number" id="m-dom" placeholder="14" /></div>
+        </div>
+      </div>
+
+      <!-- STEP 2: FINANCIAL -->
+      <div class="mstep hidden" id="mstep-1">
+        <div class="form-grid-2">
+          <div class="fg"><label>Down Payment %</label><div class="inp-suf"><input type="number" id="m-down" value="20" step="1" /><span>%</span></div></div>
+          <div class="fg"><label>Interest Rate</label><div class="inp-suf"><input type="number" id="m-rate" value="7.0" step="0.125" /><span>%</span></div></div>
+          <div class="fg"><label>Loan Term</label><select id="m-term"><option value="30">30 yr</option><option value="20">20 yr</option><option value="15">15 yr</option></select></div>
+          <div class="fg"><label>Annual Property Tax</label><div class="inp-pre"><span>$</span><input type="number" id="m-tax" placeholder="4500" /></div></div>
+          <div class="fg"><label>Annual Insurance</label><div class="inp-pre"><span>$</span><input type="number" id="m-ins" placeholder="1800" /></div></div>
+          <div class="fg"><label>HOA Monthly</label><div class="inp-pre"><span>$</span><input type="number" id="m-hoa" value="0" /></div></div>
+          <div class="fg"><label>Maint. Reserve</label><div class="inp-suf"><input type="number" id="m-maint" value="1" step="0.5" /><span>%/yr</span></div></div>
+          <div class="fg"><label>Closing Costs</label><div class="inp-pre"><span>$</span><input type="number" id="m-closing" placeholder="8000" /></div></div>
+        </div>
+        <div class="live-calc-bar" id="live-calc">
+          <div class="lc-item"><span class="lc-l">Loan Amount</span><span class="lc-v" id="lc-loan">—</span></div>
+          <div class="lc-item"><span class="lc-l">Monthly Mortgage</span><span class="lc-v" id="lc-mort">—</span></div>
+          <div class="lc-item"><span class="lc-l">PITI / Month</span><span class="lc-v" id="lc-piti">—</span></div>
+        </div>
+      </div>
+
+      <!-- STEP 3: UNITS -->
+      <div class="mstep hidden" id="mstep-2">
+        <p class="hint-text">You'll live in Unit 1. Describe each unit and estimate market rent for rental units.</p>
+        <div id="m-units-form"></div>
+        <div class="fg" style="margin-top:16px;">
+          <label>Vacancy Rate</label>
+          <div class="inp-suf" style="max-width:180px;"><input type="number" id="m-vacancy" value="5" step="1" /><span>%</span></div>
+          <span class="field-hint">Typical: 5% good condition, 8–10% older property</span>
+        </div>
+      </div>
+
+      <!-- STEP 4: CONDITION -->
+      <div class="mstep hidden" id="mstep-3">
+        <p class="hint-text">Quick condition check — you can update detailed costs in the Repairs tab later.</p>
+        <div class="quick-condition-grid" id="m-condition-grid"></div>
+        <div class="form-grid-1" style="margin-top:16px;">
+          <div class="fg"><label>School District</label><input type="text" id="m-school" placeholder="e.g., Waukesha School District" /></div>
+          <div class="fg"><label>First Impressions / Notes</label><textarea id="m-notes" rows="3" placeholder="Observations from listing photos, open house visit, or Zillow…"></textarea></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn-ghost" id="modal-prev" disabled>← Back</button>
+      <button class="btn-gold" id="modal-next">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast hidden" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
