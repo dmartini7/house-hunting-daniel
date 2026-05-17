@@ -111,8 +111,16 @@ function extractFromURL(url) {
   return {};
 }
 
+// Returns true if the HTML is a bot/CAPTCHA challenge (not real listing content)
+function isBotChallenge(text) {
+  return text.includes('Human Verification') || text.includes('Attention Required') ||
+         text.includes('cf-browser-verification') || text.includes('challenge-platform') ||
+         text.includes('CAPTCHA') || text.includes('captcha') ||
+         (text.includes('Cloudflare') && text.length < 8000);
+}
+
 // Fetch via proxy — tries allorigins first, corsproxy.io as fallback
-async function proxyGet(targetUrl, wantJson = false, timeout = 16000) {
+async function proxyGet(targetUrl, timeout = 10000) {
   const proxies = [
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, json: true },
     { url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, json: false },
@@ -125,7 +133,9 @@ async function proxyGet(targetUrl, wantJson = false, timeout = 16000) {
       clearTimeout(timer);
       if (!res.ok) continue;
       const text = p.json ? (await res.json()).contents : await res.text();
-      if (text && text.length > 100) return text;
+      if (!text || text.length < 100) continue;
+      if (isBotChallenge(text)) continue; // blocked — skip to next proxy
+      return text;
     } catch(e) { continue; }
   }
   return null;
@@ -800,44 +810,42 @@ function renderOverview(p) {
           <div class="qf-sub">Fill in what you know — the analysis updates instantly.</div>
         </div>
       </div>
-      <div class="qf-grid">
-        <div class="fg qf-full"><label>Address</label>
+      <div class="qf-row-main">
+        <div class="fg qf-addr-field"><label>Address</label>
           <input type="text" id="qf-address" value="${p.address || ''}" placeholder="123 Oak St, Waukesha, WI 53188" />
         </div>
-        <div class="fg"><label>Asking Price</label>
+        <div class="fg qf-price-field"><label>Asking Price</label>
           <div class="inp-pre"><span>$</span><input type="number" id="qf-price" value="${p.price || ''}" placeholder="350000" /></div>
         </div>
-        <div class="fg"><label>Property Type</label>
+        <div class="fg"><label>Type</label>
           <select id="qf-type">
-            <option value="duplex"   ${p.propertyType==='duplex'   ?'selected':''}>Duplex (2 units)</option>
-            <option value="triplex"  ${p.propertyType==='triplex'  ?'selected':''}>Triplex (3 units)</option>
-            <option value="fourplex" ${p.propertyType==='fourplex' ?'selected':''}>Fourplex (4 units)</option>
+            <option value="duplex"   ${p.propertyType==='duplex'   ?'selected':''}>Duplex</option>
+            <option value="triplex"  ${p.propertyType==='triplex'  ?'selected':''}>Triplex</option>
+            <option value="fourplex" ${p.propertyType==='fourplex' ?'selected':''}>4-plex</option>
             <option value="single"   ${p.propertyType==='single'   ?'selected':''}>Single Family</option>
           </select>
         </div>
         <div class="fg"><label>Beds</label>
-          <input type="number" id="qf-beds" value="${p.beds || ''}" placeholder="4" />
-        </div>
+          <input type="number" id="qf-beds" value="${p.beds || ''}" placeholder="4" /></div>
         <div class="fg"><label>Baths</label>
-          <input type="number" id="qf-baths" value="${p.baths || ''}" placeholder="2" step="0.5" />
-        </div>
-        <div class="fg"><label>Sq Ft</label>
-          <input type="number" id="qf-sqft" value="${p.sqft || ''}" placeholder="2400" />
-        </div>
-        <div class="fg"><label>Year Built</label>
-          <input type="number" id="qf-year" value="${p.yearBuilt || ''}" placeholder="1985" />
-        </div>
-        <div class="fg"><label>Annual Taxes</label>
-          <div class="inp-pre"><span>$</span><input type="number" id="qf-tax" value="${p.taxAnnual || ''}" placeholder="4500" /></div>
-        </div>
-        <div class="fg"><label>Est. Monthly Rent (Unit 2)</label>
-          <div class="inp-pre"><span>$</span><input type="number" id="qf-rent" value="${allUnitsRent || ''}" placeholder="1400" /></div>
-        </div>
-        <div class="fg"><label>School District</label>
-          <input type="text" id="qf-school" value="${p.schoolDistrict || ''}" placeholder="e.g. Waukesha School District" />
-        </div>
+          <input type="number" id="qf-baths" value="${p.baths || ''}" placeholder="2" step="0.5" /></div>
+        <button class="btn-gold qf-go-btn" onclick="saveQuickFill()">→ Analyze</button>
       </div>
-      <button class="btn-gold btn-full" onclick="saveQuickFill()">→ Run Full Analysis</button>
+      <details class="qf-more-details">
+        <summary>+ More details (sq ft, year, taxes, rent, school)</summary>
+        <div class="qf-grid">
+          <div class="fg"><label>Sq Ft</label>
+            <input type="number" id="qf-sqft" value="${p.sqft || ''}" placeholder="2400" /></div>
+          <div class="fg"><label>Year Built</label>
+            <input type="number" id="qf-year" value="${p.yearBuilt || ''}" placeholder="1985" /></div>
+          <div class="fg"><label>Annual Taxes</label>
+            <div class="inp-pre"><span>$</span><input type="number" id="qf-tax" value="${p.taxAnnual || ''}" placeholder="4500" /></div></div>
+          <div class="fg"><label>Rent / Unit 2</label>
+            <div class="inp-pre"><span>$</span><input type="number" id="qf-rent" value="${allUnitsRent || ''}" placeholder="1400" /></div></div>
+          <div class="fg"><label>School District</label>
+            <input type="text" id="qf-school" value="${p.schoolDistrict || ''}" placeholder="Waukesha SD" /></div>
+        </div>
+      </details>
     </div>` : '';
 
   // ── FINANCIAL ASSUMPTIONS BAR — always visible, always editable ──────────
@@ -1775,20 +1783,19 @@ function init() {
       return p;
     }
 
-    // ── All URLs: optimistic render immediately, then auto-fetch in background ──
+    // ── Create property + show it immediately — fetch runs silently in background ──
     const p = buildDefaults(url);
     state.properties.unshift(p);
     save();
     state.activeId  = p.id;
     state.view      = 'property';
     state.activeTab = 'overview';
-    renderAll();
+    renderAll(); // Shows quick-fill form right away (no price yet = hasMissingData)
 
-    if (badge) { badge.textContent = `⏳ Reading from ${platform}…`; badge.classList.remove('hidden'); }
     el('analyze-btn').disabled = true;
 
-    try {
-      const fetched = await fetchListingData(url);
+    // Fire fetch in background — don't block the UI
+    fetchListingData(url).then(fetched => {
       if (fetched && (fetched.address || fetched.price)) {
         const idx = state.properties.findIndex(x => x.id === p.id);
         if (idx >= 0) {
@@ -1800,20 +1807,17 @@ function init() {
           save();
           if (state.activeId === p.id) renderPropertyDetail();
           renderSidebar();
-          showToast(`Listing loaded from ${platform}!`);
+          showToast(`Auto-filled from ${platform}!`);
         }
-      } else {
-        // Couldn't read — property card is already showing with quick-fill panel
-        showToast(`Couldn't auto-read ${platform} — enter details in the card below`, 'warn');
-        if (state.activeId === p.id) renderPropertyDetail();
       }
-    } catch(e) {
-      showToast(`Couldn't auto-read ${platform} — enter details in the card below`, 'warn');
-      if (state.activeId === p.id) renderPropertyDetail();
-    } finally {
+      // If fetch fails — form is already visible, user fills it in. No toast needed.
+    }).catch(() => {}).finally(() => {
       if (badge) badge.classList.add('hidden');
       el('analyze-btn').disabled = false;
-    }
+    });
+
+    // Show a subtle badge but don't make the user wait
+    if (badge) { badge.textContent = `⏳ Trying to auto-read ${platform}…`; badge.classList.remove('hidden'); }
   }
 
   // Modal nav
