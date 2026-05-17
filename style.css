@@ -803,6 +803,33 @@ textarea:focus { border-color: var(--gold); background: #fff; }
   font-size: 1rem; font-weight: 800; letter-spacing: 0.02em;
 }
 
+/* Auto-fill from Zillow/Redfin section inside quick-fill panel */
+.qf-autofill-section {
+  background: rgba(212,168,67,0.1); border: 1.5px solid rgba(212,168,67,0.4);
+  border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 18px;
+}
+.qf-autofill-label {
+  font-size: 0.82rem; color: rgba(255,255,255,0.75); line-height: 1.5; margin-bottom: 10px;
+}
+.qf-autofill-label strong { color: var(--gold); }
+.qf-autofill-row {
+  display: flex; gap: 8px;
+}
+.qf-autofill-row input {
+  flex: 1; background: rgba(255,255,255,0.1); border: 1.5px solid rgba(255,255,255,0.2);
+  color: #fff; border-radius: var(--radius-sm); padding: 9px 12px; font-size: 0.85rem;
+}
+.qf-autofill-row input::placeholder { color: rgba(255,255,255,0.35); }
+.qf-autofill-row input:focus { border-color: var(--gold); outline: none; background: rgba(255,255,255,0.15); }
+.qf-autofill-row .btn-gold { white-space: nowrap; padding: 9px 16px; font-size: 0.85rem; font-weight: 700; border-radius: var(--radius-sm); }
+.qf-alt-status { font-size: 0.78rem; margin-top: 6px; min-height: 16px; }
+.qf-alt-status.loading { color: var(--gold); }
+.qf-alt-status.error   { color: #e07070; }
+.qf-divider {
+  text-align: center; color: rgba(255,255,255,0.3); font-size: 0.75rem;
+  margin: 14px 0 4px; letter-spacing: 0.05em;
+}
+
 /* ── FINANCIAL ASSUMPTIONS BAR ──────────────────────────────────────────── */
 .assumptions-bar {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;

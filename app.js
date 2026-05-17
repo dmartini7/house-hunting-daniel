@@ -700,8 +700,22 @@ function renderOverview(p) {
 
   // ── Inline Quick-Fill (shown whenever address OR price is missing) ──────────
   const allUnitsRent = (p.units || []).slice(1).reduce((s, u) => s + (Number(u.rent) || 0), 0);
+  const isMls = p.url && (isMlsFeedUrl(p.url) || !isKnownListingSite(p.url));
   const missingBanner = hasMissingData ? `
     <div class="quick-fill-panel">
+      ${isMls ? `
+      <div class="qf-autofill-section">
+        <div class="qf-autofill-label">
+          <strong>FlexMLS / MLS links can't be auto-read</strong> (they use JavaScript to load data).<br>
+          Find this same property on <strong>Zillow, Redfin, or Realtor.com</strong> and paste that link below to auto-fill everything:
+        </div>
+        <div class="qf-autofill-row">
+          <input type="text" id="qf-alt-url" placeholder="Paste Zillow / Redfin / Realtor.com link here…" />
+          <button class="btn-gold" onclick="tryAltUrl('${p.id}')">Auto-Fill ↗</button>
+        </div>
+        <div id="qf-alt-status" class="qf-alt-status"></div>
+        <div class="qf-divider">— or enter manually below —</div>
+      </div>` : ''}
       <div class="qf-header">
         <span class="qf-icon">🏡</span>
         <div>
@@ -972,6 +986,34 @@ window.saveQuickFill = function() {
   renderPropertyDetail();
   renderSidebar();
   showToast('Analysis updated! 🎉');
+};
+
+window.tryAltUrl = async function(propId) {
+  const altUrl = el('qf-alt-url')?.value?.trim();
+  if (!altUrl) return;
+  const statusEl = el('qf-alt-status');
+  if (statusEl) { statusEl.textContent = 'Reading listing…'; statusEl.className = 'qf-alt-status loading'; }
+
+  try {
+    const fetched = await fetchListingData(altUrl);
+    if (!fetched || (!fetched.address && !fetched.price)) {
+      if (statusEl) { statusEl.textContent = 'Couldn\'t read that URL — try a different one or fill in manually.'; statusEl.className = 'qf-alt-status error'; }
+      return;
+    }
+    // Merge fetched data into the property and re-render
+    const idx = state.properties.findIndex(x => x.id === propId);
+    if (idx < 0) return;
+    const p = state.properties[idx];
+    Object.assign(p, fetched);
+    if (!fetched.downPct) {} // keep existing
+    p.updatedAt = new Date().toISOString();
+    save();
+    renderPropertyDetail();
+    renderSidebar();
+    showToast('Listing auto-filled from ' + detectPlatform(altUrl) + '!');
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = 'Fetch failed — check the URL and try again.'; statusEl.className = 'qf-alt-status error'; }
+  }
 };
 
 window.saveAssumptions = function() {
