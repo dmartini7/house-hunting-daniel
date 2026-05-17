@@ -75,6 +75,12 @@ function isMlsFeedUrl(url) {
          url.includes('mlsfeeds') || url.includes('notification_id');
 }
 
+function isKnownListingSite(url) {
+  return url.includes('zillow.com') || url.includes('redfin.com') ||
+         url.includes('realtor.com') || url.includes('trulia.com') ||
+         url.includes('homes.com');
+}
+
 // Synchronous — extracts what we can from the URL slug alone
 function extractFromURL(url) {
   // Zillow: /homedetails/123-Main-St-Waukesha-WI-53188/12345_zpid/
@@ -230,6 +236,39 @@ function parseRealtor(html) {
       yearBuilt: p.description?.year_built,
     };
   } catch(e) { return parseGenericMeta(html); }
+}
+
+// FlexMLS newsfeed fetch — tries to read listing data from the email link
+async function fetchFlexMLS(url) {
+  try {
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 14000);
+    const res = await fetch(proxyUrl, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const html = json.contents || '';
+    if (!html || html.length < 200) return null;
+
+    // FlexMLS listing detail page has price and address in specific patterns
+    const price = parseFloat(
+      (html.match(/\$([0-9,]+)\s*(?:List Price|Price|Asking)/i)?.[1] || '').replace(/,/g, '')
+    ) || parseFloat(
+      (html.match(/list[_\s-]?price[^0-9$]*\$?([0-9,]+)/i)?.[1] || '').replace(/,/g, '')
+    ) || 0;
+
+    const addrMatch = html.match(/(\d+\s+[A-Z][a-zA-Z\s]+(?:St|Ave|Rd|Dr|Ln|Blvd|Ct|Way|Pl|Cir)[^,<"]*),?\s*([A-Za-z\s]+),?\s*(WI|IL|MN|IA)\s*(\d{5})/i);
+    const address = addrMatch ? `${addrMatch[1].trim()}, ${addrMatch[2].trim()}, ${addrMatch[3]} ${addrMatch[4]}` : '';
+
+    const beds  = Number(html.match(/(\d+)\s*(?:Bed|BR|bed)/i)?.[1] || 0);
+    const baths = Number(html.match(/(\d*\.?\d+)\s*(?:Bath|BA|bath)/i)?.[1] || 0);
+    const sqft  = Number((html.match(/([0-9,]+)\s*(?:sq\.?\s*ft|sqft|square\s*feet)/i)?.[1] || '').replace(/,/g, '') || 0);
+    const year  = Number(html.match(/(?:Year Built|Built in|YR BUILT)[^\d]*(\d{4})/i)?.[1] || 0);
+
+    if (!address && !price) return null;
+    return { address, price, beds, baths, sqft, yearBuilt: year };
+  } catch(e) { return null; }
 }
 
 function parseGenericMeta(html) {
@@ -1558,45 +1597,51 @@ function init() {
 
     const platform = detectPlatform(url);
     const badge    = el('url-badge');
+    const urlData  = extractFromURL(url);
+    el('url-input').value = '';
 
-    // Immediately extract what the URL slug tells us
-    const urlData = extractFromURL(url);
-
-    // Inherit financial defaults from the most recent property
-    const prev = state.properties[0];
-    const p = defaultProperty(url);
-    Object.assign(p, urlData);
-    if (prev) {
-      p.downPct    = prev.downPct;
-      p.rate       = prev.rate;
-      p.term       = prev.term;
-      p.insAnnual  = prev.insAnnual  || p.insAnnual;
-      p.maintPct   = prev.maintPct  || 1;
-      p.vacancyPct = prev.vacancyPct || 5;
+    // Build a defaults object (inherit financials from most recent property)
+    function buildDefaults(url) {
+      const prev = state.properties[0];
+      const p    = defaultProperty(url);
+      Object.assign(p, urlData);
+      if (prev) {
+        p.downPct    = prev.downPct;
+        p.rate       = prev.rate;
+        p.term       = prev.term;
+        p.insAnnual  = prev.insAnnual  || p.insAnnual;
+        p.maintPct   = prev.maintPct   || 1;
+        p.vacancyPct = prev.vacancyPct || 5;
+      }
+      return p;
     }
 
-    // Show immediately — optimistic render
+    // ── PATH A: MLS feed / unknown link ──────────────────────────────────────
+    // Skip network attempt, go straight to modal — no blank property created
+    if (isMlsFeedUrl(url) || !isKnownListingSite(url)) {
+      const p = buildDefaults(url);
+      window._modalDraft = p;
+      el('modal-title').textContent = 'Enter Listing Details';
+      el('modal-sub').textContent   = `${platform} — couldn't auto-read, enter manually`;
+      fillModalStep0(p);
+      fillModalStep1(p);
+      state.modalStep = 0;
+      updateModalStepView();
+      show('modal-overlay');
+      return;
+    }
+
+    // ── PATH B: Zillow / Redfin / Realtor — optimistic render + background fetch
+    const p = buildDefaults(url);
     state.properties.unshift(p);
     save();
     state.activeId  = p.id;
     state.view      = 'property';
     state.activeTab = 'overview';
-    el('url-input').value = '';
     renderAll();
 
-    // Background fetch from the listing site
     if (badge) { badge.textContent = `⏳ Reading from ${platform}…`; badge.classList.remove('hidden'); }
     el('analyze-btn').disabled = true;
-
-    // MLS feed/notification links can't be auto-read — tell them to use quick fill
-    if (isMlsFeedUrl(url)) {
-      setTimeout(() => {
-        if (badge) badge.classList.add('hidden');
-        el('analyze-btn').disabled = false;
-        showToast('MLS feed link detected — fill in property details below ↓', 'warn');
-      }, 1200);
-      return;
-    }
 
     try {
       const fetched = await fetchListingData(url);
@@ -1604,7 +1649,6 @@ function init() {
         const idx = state.properties.findIndex(x => x.id === p.id);
         if (idx >= 0) {
           const merged = { ...state.properties[idx], ...fetched, id: p.id, createdAt: p.createdAt, url };
-          // Keep inherited financials if fetch didn't return them
           if (!fetched.downPct) merged.downPct = p.downPct;
           if (!fetched.rate)    merged.rate    = p.rate;
           if (!fetched.term)    merged.term    = p.term;
@@ -1612,13 +1656,14 @@ function init() {
           save();
           if (state.activeId === p.id) renderPropertyDetail();
           renderSidebar();
-          showToast(`✓ Listing data loaded from ${platform}!`);
+          showToast(`✓ Listing loaded from ${platform}!`);
         }
       } else {
-        showToast(`${platform} couldn't be auto-read — fill in details below.`, 'warn');
+        // Fetch returned nothing — open modal to edit the blank property
+        openModal(url, p.id);
       }
     } catch(e) {
-      showToast('Enter details in the Edit form or Financials tab.', 'warn');
+      openModal(url, p.id);
     } finally {
       if (badge) badge.classList.add('hidden');
       el('analyze-btn').disabled = false;
