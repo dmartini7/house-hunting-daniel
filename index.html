@@ -23,6 +23,7 @@
     </div>
     <div class="url-bar-wrap">
       <input type="text" id="url-input" placeholder="Paste a Zillow, Redfin, or Realtor.com listing URL and press Enter…" />
+      <span class="url-platform-badge hidden" id="url-badge"></span>
       <button id="analyze-btn" class="btn-gold">+ Analyze</button>
     </div>
     <button class="btn-ghost" id="compare-toggle-btn">⇄ Compare</button>
@@ -141,23 +142,8 @@
 
         <div class="tab-body">
 
-          <!-- OVERVIEW -->
-          <div class="tab-pane active" id="tab-overview">
-            <div class="overview-grid">
-              <div class="card key-numbers-card">
-                <div class="card-title">Key Numbers</div>
-                <div class="kn-grid" id="kn-grid"></div>
-              </div>
-              <div class="card">
-                <div class="card-title">Distances to Your Locations</div>
-                <div id="ov-distances"></div>
-              </div>
-              <div class="card">
-                <div class="card-title">Analysis Summary</div>
-                <div id="ov-summary"></div>
-              </div>
-            </div>
-          </div>
+          <!-- OVERVIEW — fully rendered by renderOverview() -->
+          <div class="tab-pane active" id="tab-overview"></div>
 
           <!-- FINANCIALS -->
           <div class="tab-pane hidden" id="tab-financials">

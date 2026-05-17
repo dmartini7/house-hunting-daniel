@@ -636,3 +636,125 @@ textarea:focus { border-color: var(--gold); background: #fff; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--cream-mid); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+
+/* ── URL LOADING BADGE ──────────────────────────────────────────────────── */
+.url-platform-badge {
+  font-size: 0.78rem; font-weight: 600;
+  color: var(--gold-light); white-space: nowrap;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
+
+/* ── MISSING DATA BANNER ────────────────────────────────────────────────── */
+.missing-banner {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--amber-bg); border: 1.5px solid var(--gold);
+  border-radius: var(--radius-sm); padding: 12px 16px;
+  font-size: 0.84rem; color: var(--text); margin-bottom: 16px;
+}
+.missing-banner span:first-child { font-size: 1.1rem; flex-shrink: 0; margin-top: 1px; }
+
+/* ── QUICK STATS BAND ───────────────────────────────────────────────────── */
+.qs-band {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  margin-bottom: 16px;
+}
+@media (max-width: 900px) { .qs-band { grid-template-columns: 1fr 1fr; } }
+.qs-box {
+  border-radius: var(--radius); padding: 16px 18px;
+  border: 1px solid var(--border);
+}
+.qs-label {
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 6px;
+}
+.qs-num {
+  font-size: 1.6rem; font-weight: 800; line-height: 1.1;
+  margin-bottom: 4px; font-family: 'Inter', sans-serif;
+}
+.qs-sub { font-size: 0.73rem; color: var(--text-muted); line-height: 1.4; }
+
+/* ── OVERVIEW TWO COLUMN ────────────────────────────────────────────────── */
+.ov-two-col {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin-bottom: 12px;
+}
+@media (max-width: 860px) { .ov-two-col { grid-template-columns: 1fr; } }
+
+/* ── OVERVIEW SECTION CARDS ─────────────────────────────────────────────── */
+.ov-section-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 20px;
+  margin-bottom: 12px;
+}
+.ov-section-card:last-child { margin-bottom: 0; }
+.ov-section-title {
+  font-weight: 800; font-size: 0.82rem; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--navy);
+  margin-bottom: 14px; padding-bottom: 10px;
+  border-bottom: 2px solid var(--gold);
+  display: inline-block;
+}
+
+/* ── BREAKDOWN ROWS ─────────────────────────────────────────────────────── */
+.ov-breakdown { display: flex; flex-direction: column; gap: 0; }
+.ovbr-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 0; border-bottom: 1px solid var(--border); gap: 10px;
+}
+.ovbr-row:last-child { border-bottom: none; }
+.ovbr-label { font-size: 0.84rem; color: var(--text-muted); flex: 1; }
+.ovbr-right { display: flex; align-items: center; gap: 8px; }
+.ovbr-note { font-size: 0.72rem; color: var(--text-light); }
+.ovbr-amt { font-size: 0.9rem; font-weight: 700; color: var(--navy); white-space: nowrap; }
+.ovbr-total {
+  font-weight: 800; font-size: 0.95rem; color: var(--navy);
+  margin-top: 4px; padding-top: 10px !important;
+  border-top: 2px solid var(--navy) !important;
+  border-bottom: none !important;
+}
+
+/* ── DISTANCE ROWS ──────────────────────────────────────────────────────── */
+.ovdist-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 0; border-bottom: 1px solid var(--border);
+}
+.ovdist-row:last-of-type { border-bottom: none; }
+.ovdist-icon { font-size: 1.4rem; flex-shrink: 0; }
+.ovdist-info { flex: 1; }
+.ovdist-name { font-weight: 700; font-size: 0.86rem; color: var(--navy); }
+.ovdist-addr { font-size: 0.73rem; color: var(--text-muted); }
+.ovdist-link {
+  font-size: 0.75rem; font-weight: 700; color: var(--gold-dark);
+  padding: 5px 11px; border: 1.5px solid var(--gold);
+  border-radius: 50px; transition: var(--transition); white-space: nowrap;
+}
+.ovdist-link:hover { background: var(--gold); color: var(--navy); }
+.ovdist-na { font-size: 0.73rem; color: var(--text-light); }
+
+/* ── RENTAL ANALYSIS BAND ───────────────────────────────────────────────── */
+.ov-rental-band { }
+.ov-rent-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+}
+@media (max-width: 1000px) { .ov-rent-grid { grid-template-columns: 1fr 1fr; } }
+.ovrent-box {
+  background: var(--cream); border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm); padding: 14px 16px;
+}
+.ovrent-label {
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 6px;
+}
+.ovrent-cf { font-size: 1.4rem; font-weight: 800; margin-bottom: 6px; line-height: 1; }
+.ovrent-detail { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+
+/* ── RESEARCH CHIPS ─────────────────────────────────────────────────────── */
+.ov-research-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ov-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 13px; border: 1.5px solid var(--border);
+  border-radius: 50px; font-size: 0.78rem; font-weight: 600;
+  color: var(--navy); transition: var(--transition); background: var(--cream);
+}
+.ov-chip:hover { border-color: var(--gold); background: #fff; }

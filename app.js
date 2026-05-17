@@ -56,6 +56,185 @@ const RENTAL_RESEARCH_LINKS = (address) => {
   ];
 };
 
+// ── LISTING FETCH & PARSE ─────────────────────────────────────────────────────
+
+function detectPlatform(url) {
+  if (url.includes('zillow.com'))  return 'Zillow';
+  if (url.includes('redfin.com'))  return 'Redfin';
+  if (url.includes('realtor.com')) return 'Realtor.com';
+  if (url.includes('homes.com'))   return 'Homes.com';
+  if (url.includes('trulia.com'))  return 'Trulia';
+  return 'listing';
+}
+
+// Synchronous — extracts what we can from the URL slug alone
+function extractFromURL(url) {
+  // Zillow: /homedetails/123-Main-St-Waukesha-WI-53188/12345_zpid/
+  const zMatch = url.match(/zillow\.com\/homedetails\/([^/?]+)/);
+  if (zMatch) {
+    const parts  = zMatch[1].split('-');
+    const zpidI  = parts.findIndex(p => /^\d{7,}$/.test(p));
+    const slug   = zpidI >= 0 ? parts.slice(0, zpidI) : parts;
+    const stateI = slug.findIndex(p => /^[A-Z]{2}$/.test(p));
+    const street = stateI > 1 ? slug.slice(0, stateI - 1).join(' ') : slug.slice(0, -2).join(' ');
+    const state  = stateI >= 0 ? slug[stateI] : '';
+    const city   = stateI > 0  ? slug[stateI - 1] : '';
+    return { address: [street, city, state].filter(Boolean).join(', ') };
+  }
+  // Redfin: /WI/Waukesha/123-Main-St-53188/home/
+  const rfMatch = url.match(/redfin\.com\/([A-Z]{2})\/([^/]+)\/([^/]+)\/home/);
+  if (rfMatch) {
+    const st  = rfMatch[1];
+    const cty = rfMatch[2].replace(/-/g, ' ');
+    const str = rfMatch[3].replace(/-\d{5}$/, '').replace(/-/g, ' ');
+    return { address: `${str}, ${cty}, ${st}` };
+  }
+  // Realtor: /realestateandhomes-detail/123-Main-St_Waukesha_WI_53188
+  const rlMatch = url.match(/realtor\.com\/realestateandhomes-detail\/([^?/]+)/);
+  if (rlMatch) {
+    return { address: rlMatch[1].replace(/_/g, ', ').replace(/-/g, ' ') };
+  }
+  return {};
+}
+
+// Async — fetches page via proxy and extracts structured data
+async function fetchListingData(url) {
+  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 14000);
+    const res = await fetch(proxyUrl, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const html = json.contents || '';
+    if (!html || html.length < 500) return null;
+    if (url.includes('zillow.com'))  return parseZillow(html)  || parseGenericMeta(html);
+    if (url.includes('redfin.com'))  return parseRedfin(html)  || parseGenericMeta(html);
+    if (url.includes('realtor.com')) return parseRealtor(html) || parseGenericMeta(html);
+    return parseGenericMeta(html);
+  } catch(e) { return null; }
+}
+
+const PROP_TYPE_MAP = {
+  SINGLE_FAMILY: 'single', SINGLE_FAMILY_RESIDENCE: 'single',
+  MULTI_FAMILY: 'duplex', MULTI_FAMILY_2_4: 'duplex',
+  DUPLEX: 'duplex', TRIPLEX: 'triplex',
+  QUADRUPLEX: 'fourplex', QUADPLEX: 'fourplex',
+  CONDO: 'single', TOWNHOUSE: 'single', MOBILE: 'single',
+};
+
+function mapZillowProp(p) {
+  if (!p || !p.streetAddress) return null;
+  const price = Number(p.price || p.listPrice || p.hdpData?.homeInfo?.price || 0);
+  const beds  = Number(p.bedrooms  || p.beds  || 0);
+  const baths = Number(p.bathrooms || p.baths || 0);
+  const sqft  = Number(p.livingArea || p.squareFeet || p.resoFacts?.livingArea || 0);
+  const year  = Number(p.yearBuilt  || p.resoFacts?.yearBuilt || 0);
+  const type  = PROP_TYPE_MAP[p.homeType] || PROP_TYPE_MAP[p.propertyType] || 'duplex';
+  const addr  = [p.streetAddress, p.city, p.state, p.zipcode].filter(Boolean).join(', ');
+  const taxR  = p.propertyTaxRate || 0;
+
+  const result = { address: addr, price, beds, baths, sqft, yearBuilt: year, propertyType: type };
+  if (taxR && price) result.taxAnnual = Math.round(price * taxR / 100);
+  if (p.zestimate)     result.zestimate = p.zestimate;
+  if (p.daysOnZillow)  result.dom = p.daysOnZillow;
+  if (p.description)   result.notes = p.description.slice(0, 600);
+  const schools = p.schools || p.schoolsSummary?.schools;
+  if (schools?.[0]?.name) result.schoolDistrict = schools[0].name;
+  const numU = numUnitsForType(type);
+  result.units = Array.from({ length: numU }, (_, i) => ({
+    label: i === 0 ? 'Unit 1 (Owner)' : `Unit ${i+1} (Rental)`,
+    beds:  i === 0 ? Math.ceil(beds / numU) : Math.floor(beds / numU),
+    baths: i === 0 ? Math.ceil(baths / numU) : Math.floor(baths / numU),
+    sqft:  Math.round((sqft || 0) / numU),
+    rent: 0,
+  }));
+  return result;
+}
+
+function parseZillow(html) {
+  try {
+    const match = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!match) return null;
+    const nd = JSON.parse(match[1]);
+
+    // Path 1: gdpClientCache (common in Zillow)
+    try {
+      const gdpStr = nd?.props?.pageProps?.componentProps?.gdpClientCache;
+      if (gdpStr) {
+        const gdp = JSON.parse(gdpStr);
+        const key = Object.keys(gdp).find(k => gdp[k]?.property?.streetAddress);
+        if (key) return mapZillowProp(gdp[key].property);
+      }
+    } catch(e) {}
+
+    // Path 2: initialReduxState
+    try {
+      const irs = nd?.props?.pageProps?.initialReduxState;
+      const prop = irs?.gdp?.building || irs?.homeDetails?.building;
+      if (prop?.streetAddress) return mapZillowProp(prop);
+    } catch(e) {}
+
+    // Path 3: flat pageProps
+    try {
+      const pp = nd?.props?.pageProps;
+      const prop = pp?.building || pp?.property || pp?.initialData?.property;
+      if (prop?.streetAddress) return mapZillowProp(prop);
+    } catch(e) {}
+
+    return null;
+  } catch(e) { return null; }
+}
+
+function parseRedfin(html) {
+  try {
+    const m = html.match(/root\.__reactData\s*=\s*({[\s\S]*?});\s*(?:window|root|<)/);
+    if (!m) return parseGenericMeta(html);
+    const data = JSON.parse(m[1]);
+    const l = data?.root?.listing || data?.listing || data?.homeData;
+    if (!l) return parseGenericMeta(html);
+    return {
+      address:      [l.streetLine?.value, l.city, l.state, l.zip].filter(Boolean).join(', '),
+      price:        l.price?.value    || l.listingPrice?.value,
+      beds:         l.beds,
+      baths:        l.baths,
+      sqft:         l.sqFt?.value,
+      yearBuilt:    l.yearBuilt?.value,
+      propertyType: 'duplex',
+    };
+  } catch(e) { return parseGenericMeta(html); }
+}
+
+function parseRealtor(html) {
+  try {
+    const m = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!m) return parseGenericMeta(html);
+    const nd = JSON.parse(m[1]);
+    const p = nd?.props?.pageProps?.property || nd?.props?.pageProps?.listing;
+    if (!p) return parseGenericMeta(html);
+    return {
+      address: [p.location?.address?.line, p.location?.address?.city, p.location?.address?.state_code, p.location?.address?.postal_code].filter(Boolean).join(', '),
+      price:   p.list_price || p.price,
+      beds:    p.description?.beds,
+      baths:   p.description?.baths_consolidated || p.description?.baths,
+      sqft:    p.description?.sqft,
+      yearBuilt: p.description?.year_built,
+    };
+  } catch(e) { return parseGenericMeta(html); }
+}
+
+function parseGenericMeta(html) {
+  try {
+    const get = (re) => html.match(re)?.[1]?.trim();
+    const price = Number(get(/itemprop="price"\s+content="([^"]+)"/) ||
+                         get(/property="product:price:amount"\s+content="([^"]+)"/) || 0);
+    const desc  = get(/property="og:description"\s+content="([^"]+)"/);
+    if (!price) return null;
+    return { price, notes: desc ? desc.slice(0, 400) : '' };
+  } catch(e) { return null; }
+}
+
 // ── STATE ─────────────────────────────────────────────────────────────────────
 
 let state = {
@@ -416,58 +595,186 @@ function renderActiveTab() {
   }
 }
 
-// ── OVERVIEW TAB ─────────────────────────────────────────────────────────────
+// ── OVERVIEW TAB — Instant Analysis Report ────────────────────────────────────
 
 function renderOverview(p) {
-  const cf  = calcCashFlow(p);
-  const rep = calcRepairTotal(p);
-  const eff = (p.price || 0) + rep;
-  const ppsf = p.sqft && p.price ? (p.price / p.sqft).toFixed(0) : null;
+  const cf   = calcCashFlow(p);
+  const exp  = cf.exp;
+  const rep  = calcRepairTotal(p);
+  const eff  = (p.price || 0) + rep;
+  const ppsf = p.sqft && p.price ? Math.round(p.price / p.sqft) : null;
+  const hasMissingData = !p.price || !p.address;
 
-  const cfClass = cf.currentCF > 0 ? 'pos' : cf.currentCF < -100 ? 'neg' : 'warn';
+  // Color helpers
+  const cfColor  = (n) => n >  100 ? '#2d7a4f' : n > -200 ? '#c9862c' : '#c94c4c';
+  const cfBg     = (n) => n >  100 ? '#e8f5ee' : n > -200 ? '#fdf3e5' : '#fdf0f0';
+  const cfSign   = (n) => n >= 0 ? '+' : '';
+  const repColor = rep > 20000 ? '#c94c4c' : rep > 8000 ? '#c9862c' : '#2d7a4f';
 
-  el('kn-grid').innerHTML = [
-    { label: 'Asking Price',    val: fmt$(p.price) },
-    { label: 'Price / SqFt',   val: ppsf ? `$${ppsf}` : '—' },
-    { label: 'Repair Estimate', val: rep > 0 ? fmt$(rep) : '$0', cls: rep > 5000 ? 'warn' : '' },
-    { label: 'Effective Price', val: fmt$(eff) },
-    { label: 'Monthly Cost',    val: fmt$(cf.exp.total) },
-    { label: 'Cash Flow / mo',  val: fmt$(cf.currentCF), cls: cfClass },
-    { label: 'Annual Tax',      val: p.taxAnnual ? fmt$(p.taxAnnual) : '—' },
-    { label: 'School District', val: p.schoolDistrict || '—' },
-  ].map(i => `<div class="kn-item">
-    <div class="kn-label">${i.label}</div>
-    <div class="kn-val ${i.cls || ''}">${i.val}</div>
-  </div>`).join('');
-
-  // Distances
-  el('ov-distances').innerHTML = KEY_LOCATIONS.map(loc => `
-    <div class="distance-item">
-      <div class="dist-icon">${loc.icon}</div>
-      <div class="dist-info">
-        <div class="dist-name">${loc.name}</div>
-        <div class="dist-addr">${loc.addr}</div>
+  // ── Missing data banner ────────────────────────────────────────────────────
+  const missingBanner = hasMissingData ? `
+    <div class="missing-banner">
+      <span>⚠️</span>
+      <div>
+        <strong>Fill in property details to complete the analysis.</strong>
+        <span> Click <b>Edit</b> above or use the <b>Financials</b> tab to enter price, taxes, and rental income.</span>
       </div>
-      ${p.address ? `<a class="dist-link" href="${mapUrl(p.address, loc.addr)}" target="_blank" rel="noopener">Get Directions ↗</a>` : '<span style="font-size:0.75rem;color:var(--text-light)">Add address first</span>'}
-    </div>`).join('');
+    </div>` : '';
 
-  // Summary
-  const summaryItems = [
-    { icon: '💰', label: 'Down Payment', val: `${fmt$(cf.downAmt)} (${p.downPct}%)` },
-    { icon: '🏦', label: 'Monthly Mortgage', val: fmt$(cf.exp.mortgage) },
-    { icon: '🏠', label: 'Total Monthly Cost', val: fmt$(cf.exp.total) },
-    { icon: '💵', label: 'Rental Income (est.)', val: fmt$(cf.grossRent) },
-    { icon: '📈', label: 'Cash Flow (living in)', val: `${cf.currentCF >= 0 ? '+' : ''}${fmt$(cf.currentCF)}/mo` },
-    { icon: '🚀', label: 'Full Investment CF', val: `${cf.fullCF >= 0 ? '+' : ''}${fmt$(cf.fullCF)}/mo` },
-    { icon: '📊', label: 'Cash-on-Cash Return', val: cf.coc ? `${cf.coc.toFixed(1)}%` : '—' },
-    { icon: '🔧', label: 'Total Repairs Est.', val: fmt$(rep) },
-  ];
+  // ── QUICK STATS BAND ───────────────────────────────────────────────────────
+  const statsBand = `
+    <div class="qs-band">
+      <div class="qs-box" style="background:var(--navy)">
+        <div class="qs-label" style="color:rgba(255,255,255,0.55)">Monthly Cost</div>
+        <div class="qs-num" style="color:#fff">${p.price ? fmt$(exp.total) : '—'}</div>
+        <div class="qs-sub" style="color:rgba(255,255,255,0.45)">PITI + maintenance</div>
+      </div>
+      <div class="qs-box" style="background:${cfBg(cf.currentCF)}">
+        <div class="qs-label">Cash Flow (living in)</div>
+        <div class="qs-num" style="color:${cfColor(cf.currentCF)}">${p.price ? cfSign(cf.currentCF)+fmt$(cf.currentCF)+'/mo' : '—'}</div>
+        <div class="qs-sub">${cf.grossRent > 0 ? `Rental covers ${fmt$(cf.grossRent)}/mo` : 'Add rental income estimate'}</div>
+      </div>
+      <div class="qs-box" style="background:${cfBg(cf.fullCF)}">
+        <div class="qs-label">Full Investment CF</div>
+        <div class="qs-num" style="color:${cfColor(cf.fullCF)}">${p.price ? cfSign(cf.fullCF)+fmt$(cf.fullCF)+'/mo' : '—'}</div>
+        <div class="qs-sub">When both units rented</div>
+      </div>
+      <div class="qs-box" style="background:${rep > 15000 ? '#fdf0f0' : rep > 5000 ? '#fdf3e5' : '#f7f5f2'}">
+        <div class="qs-label">Repairs Estimate</div>
+        <div class="qs-num" style="color:${repColor}">${rep > 0 ? fmtK(rep) : 'Not set'}</div>
+        <div class="qs-sub">Effective price: ${fmt$(eff)}</div>
+      </div>
+    </div>`;
 
-  el('ov-summary').innerHTML = summaryItems.map(i => `
-    <div class="summary-item">
-      <span class="sum-icon">${i.icon}</span>
-      <div><div class="sum-label">${i.label}</div><div class="sum-val">${i.val}</div></div>
-    </div>`).join('');
+  // ── FINANCIAL BREAKDOWN + DISTANCES ──────────────────────────────────────
+  const loanAmt = (p.price || 0) * (1 - (p.downPct || 20) / 100);
+
+  const breakdownRows = [
+    { label: 'Mortgage (P&I)',          amt: exp.mortgage,  note: `${p.downPct||20}% down · ${p.rate||7}% · ${p.term||30}yr` },
+    { label: 'Property Taxes',          amt: exp.taxes,     note: p.taxAnnual ? fmt$(p.taxAnnual)+'/yr' : 'Not set' },
+    { label: 'Insurance',               amt: exp.insurance, note: p.insAnnual ? fmt$(p.insAnnual)+'/yr' : 'Est. needed' },
+    { label: 'HOA',                     amt: exp.hoa,       note: '', hide: !exp.hoa },
+    { label: 'Maintenance Reserve',     amt: exp.maint,     note: `${p.maintPct||1}% of value/yr` },
+  ].filter(r => !r.hide);
+
+  const breakdown = `
+    <div class="ov-section-card">
+      <div class="ov-section-title">💳 Monthly Breakdown</div>
+      <div class="ov-breakdown">
+        ${breakdownRows.map(r => `
+          <div class="ovbr-row">
+            <span class="ovbr-label">${r.label}</span>
+            <div class="ovbr-right">
+              ${r.note ? `<span class="ovbr-note">${r.note}</span>` : ''}
+              <span class="ovbr-amt">${r.amt > 0 ? fmt$(r.amt) : '—'}</span>
+            </div>
+          </div>`).join('')}
+        <div class="ovbr-row ovbr-total">
+          <span>TOTAL / month</span>
+          <span>${p.price ? fmt$(exp.total) : '—'}</span>
+        </div>
+        <div class="ovbr-row" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+          <span class="ovbr-label">Loan amount</span>
+          <span class="ovbr-amt">${fmt$(loanAmt)}</span>
+        </div>
+        <div class="ovbr-row">
+          <span class="ovbr-label">Down payment</span>
+          <span class="ovbr-amt">${fmt$(cf.downAmt)} <span style="color:var(--text-muted)">(${p.downPct||20}%)</span></span>
+        </div>
+        ${p.price && ppsf ? `<div class="ovbr-row"><span class="ovbr-label">Price per sqft</span><span class="ovbr-amt">$${ppsf}/sf</span></div>` : ''}
+        ${p.taxAnnual && p.price ? `<div class="ovbr-row"><span class="ovbr-label">Tax rate est.</span><span class="ovbr-amt">${((p.taxAnnual/p.price)*100).toFixed(2)}%</span></div>` : ''}
+      </div>
+    </div>`;
+
+  const distancesHTML = `
+    <div class="ov-section-card">
+      <div class="ov-section-title">📍 Drive Times</div>
+      ${KEY_LOCATIONS.map(loc => `
+        <div class="ovdist-row">
+          <span class="ovdist-icon">${loc.icon}</span>
+          <div class="ovdist-info">
+            <div class="ovdist-name">${loc.name}</div>
+            <div class="ovdist-addr">${loc.addr}</div>
+          </div>
+          ${p.address
+            ? `<a class="ovdist-link" href="${mapUrl(p.address, loc.addr)}" target="_blank" rel="noopener">Get Directions ↗</a>`
+            : `<span class="ovdist-na">Add address</span>`}
+        </div>`).join('')}
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div class="ovbr-row">
+          <span class="ovbr-label">🎓 School District</span>
+          <span class="ovbr-amt">${p.schoolDistrict || '<span style="color:var(--text-light)">Not set</span>'}</span>
+        </div>
+        <div class="ovbr-row">
+          <span class="ovbr-label">🏙️ Year Built</span>
+          <span class="ovbr-amt">${p.yearBuilt || '—'}</span>
+        </div>
+        <div class="ovbr-row">
+          <span class="ovbr-label">📐 Lot Size</span>
+          <span class="ovbr-amt">${p.lot || '—'}</span>
+        </div>
+        <div class="ovbr-row">
+          <span class="ovbr-label">📅 Days on Market</span>
+          <span class="ovbr-amt">${p.dom || '—'}</span>
+        </div>
+      </div>
+    </div>`;
+
+  // ── RENTAL ANALYSIS BAND ──────────────────────────────────────────────────
+  const breakEven = exp.total / Math.max((p.units||[]).length - 1, 1);
+  const rentalBand = `
+    <div class="ov-section-card ov-rental-band">
+      <div class="ov-section-title">🏘️ Rentability Analysis</div>
+      <div class="ov-rent-grid">
+        <div class="ovrent-box">
+          <div class="ovrent-label">📍 Living in Unit 1</div>
+          <div class="ovrent-cf" style="color:${cfColor(cf.currentCF)}">${p.price ? cfSign(cf.currentCF)+fmt$(cf.currentCF)+'/mo' : '—'}</div>
+          <div class="ovrent-detail">Income: ${fmt$(cf.netRent)}/mo · Cost: ${fmt$(exp.total)}/mo</div>
+          <div class="ovrent-detail">Out of pocket: ${fmt$(Math.max(0, exp.total - cf.netRent))}/mo</div>
+        </div>
+        <div class="ovrent-box">
+          <div class="ovrent-label">🚀 Full Investment (both rented)</div>
+          <div class="ovrent-cf" style="color:${cfColor(cf.fullCF)}">${p.price ? cfSign(cf.fullCF)+fmt$(cf.fullCF)+'/mo' : '—'}</div>
+          <div class="ovrent-detail">Income: ${fmt$(cf.allNetRent)}/mo · Annual: ${fmt$(cf.fullCF*12)}/yr</div>
+          <div class="ovrent-detail">Cash-on-Cash: ${cf.cocFull ? cf.cocFull.toFixed(1)+'%' : '—'}</div>
+        </div>
+        <div class="ovrent-box">
+          <div class="ovrent-label">⚖️ Break-Even Rent Needed</div>
+          <div class="ovrent-cf" style="color:var(--navy)">${p.price ? fmt$(breakEven)+'/unit' : '—'}</div>
+          <div class="ovrent-detail">To fully cover all monthly expenses</div>
+          <div class="ovrent-detail">Vacancy: ${p.vacancyPct||5}% assumed</div>
+        </div>
+        <div class="ovrent-box">
+          <div class="ovrent-label">📊 Cash-on-Cash Return</div>
+          <div class="ovrent-cf" style="color:${cf.coc > 5 ? '#2d7a4f' : cf.coc > 0 ? '#c9862c' : '#c94c4c'}">${cf.coc ? cf.coc.toFixed(1)+'%' : '—'}</div>
+          <div class="ovrent-detail">Total invested: ${fmt$(cf.totalIn)}</div>
+          <div class="ovrent-detail">(down + closing + repairs)</div>
+        </div>
+      </div>
+    </div>`;
+
+  // ── QUICK RESEARCH LINKS ──────────────────────────────────────────────────
+  const links = RESEARCH_LINKS(p.address || '');
+  const researchRow = `
+    <div class="ov-section-card">
+      <div class="ov-section-title">🔍 Location Research</div>
+      <div class="ov-research-chips">
+        ${links.map(l => `<a class="ov-chip" href="${l.url}" target="_blank" rel="noopener">${l.icon} ${l.label} ↗</a>`).join('')}
+      </div>
+    </div>`;
+
+  // ── NOTES PREVIEW ──────────────────────────────────────────────────────────
+  const notesPreview = (p.notes || p.pros || p.cons) ? `
+    <div class="ov-section-card">
+      <div class="ov-section-title">📝 Notes</div>
+      ${p.pros ? `<div style="margin-bottom:6px"><span style="color:var(--green);font-weight:700">✅ Pros: </span><span style="font-size:0.85rem;color:var(--text-muted)">${p.pros}</span></div>` : ''}
+      ${p.cons ? `<div style="margin-bottom:6px"><span style="color:var(--red);font-weight:700">⚠️ Cons: </span><span style="font-size:0.85rem;color:var(--text-muted)">${p.cons}</span></div>` : ''}
+      ${p.notes ? `<div style="font-size:0.83rem;color:var(--text-muted);white-space:pre-wrap">${p.notes.slice(0,300)}${p.notes.length>300?'…':''}</div>` : ''}
+    </div>` : '';
+
+  el('tab-overview').innerHTML = missingBanner + statsBand +
+    `<div class="ov-two-col">${breakdown}${distancesHTML}</div>` +
+    rentalBand + researchRow + notesPreview;
 }
 
 // ── FINANCIALS TAB ────────────────────────────────────────────────────────────
@@ -1074,10 +1381,67 @@ function init() {
   el('url-input').addEventListener('keydown', e => { if (e.key === 'Enter') doAnalyze(); });
   el('analyze-btn').addEventListener('click', doAnalyze);
 
-  function doAnalyze() {
+  async function doAnalyze() {
     const url = el('url-input').value.trim();
-    openModal(url);
+    if (!url) { showToast('Paste a listing URL first.', 'error'); return; }
+
+    const platform = detectPlatform(url);
+    const badge    = el('url-badge');
+
+    // Immediately extract what the URL slug tells us
+    const urlData = extractFromURL(url);
+
+    // Inherit financial defaults from the most recent property
+    const prev = state.properties[0];
+    const p = defaultProperty(url);
+    Object.assign(p, urlData);
+    if (prev) {
+      p.downPct    = prev.downPct;
+      p.rate       = prev.rate;
+      p.term       = prev.term;
+      p.insAnnual  = prev.insAnnual  || p.insAnnual;
+      p.maintPct   = prev.maintPct  || 1;
+      p.vacancyPct = prev.vacancyPct || 5;
+    }
+
+    // Show immediately — optimistic render
+    state.properties.unshift(p);
+    save();
+    state.activeId  = p.id;
+    state.view      = 'property';
+    state.activeTab = 'overview';
     el('url-input').value = '';
+    renderAll();
+
+    // Background fetch from the listing site
+    if (badge) { badge.textContent = `⏳ Reading from ${platform}…`; badge.classList.remove('hidden'); }
+    el('analyze-btn').disabled = true;
+
+    try {
+      const fetched = await fetchListingData(url);
+      if (fetched && (fetched.address || fetched.price)) {
+        const idx = state.properties.findIndex(x => x.id === p.id);
+        if (idx >= 0) {
+          const merged = { ...state.properties[idx], ...fetched, id: p.id, createdAt: p.createdAt, url };
+          // Keep inherited financials if fetch didn't return them
+          if (!fetched.downPct) merged.downPct = p.downPct;
+          if (!fetched.rate)    merged.rate    = p.rate;
+          if (!fetched.term)    merged.term    = p.term;
+          state.properties[idx] = merged;
+          save();
+          if (state.activeId === p.id) renderPropertyDetail();
+          renderSidebar();
+          showToast(`✓ Listing data loaded from ${platform}!`);
+        }
+      } else {
+        showToast(`${platform} couldn't be auto-read — fill in details below.`, 'warn');
+      }
+    } catch(e) {
+      showToast('Enter details in the Edit form or Financials tab.', 'warn');
+    } finally {
+      if (badge) badge.classList.add('hidden');
+      el('analyze-btn').disabled = false;
+    }
   }
 
   // Modal nav
