@@ -116,16 +116,17 @@ async function fetchListingData(url) {
   const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 14000);
+    const timer = setTimeout(() => ctrl.abort(), 18000);
     const res = await fetch(proxyUrl, { signal: ctrl.signal });
     clearTimeout(timer);
     if (!res.ok) return null;
     const json = await res.json();
     const html = json.contents || '';
-    if (!html || html.length < 500) return null;
-    if (url.includes('zillow.com'))  return parseZillow(html)  || parseGenericMeta(html);
-    if (url.includes('redfin.com'))  return parseRedfin(html)  || parseGenericMeta(html);
-    if (url.includes('realtor.com')) return parseRealtor(html) || parseGenericMeta(html);
+    if (!html || html.length < 200) return null;
+    if (url.includes('zillow.com'))  return parseZillow(html)   || parseGenericMeta(html);
+    if (url.includes('redfin.com'))  return parseRedfin(html)   || parseGenericMeta(html);
+    if (url.includes('realtor.com')) return parseRealtor(html)  || parseGenericMeta(html);
+    if (url.includes('flexmls.com') || isMlsFeedUrl(url)) return parseFlexMLS(html) || parseGenericMeta(html);
     return parseGenericMeta(html);
   } catch(e) { return null; }
 }
@@ -238,47 +239,86 @@ function parseRealtor(html) {
   } catch(e) { return parseGenericMeta(html); }
 }
 
-// FlexMLS newsfeed fetch — tries to read listing data from the email link
-async function fetchFlexMLS(url) {
+function parseFlexMLS(html) {
   try {
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 14000);
-    const res = await fetch(proxyUrl, { signal: ctrl.signal });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const json = await res.json();
-    const html = json.contents || '';
-    if (!html || html.length < 200) return null;
+    // Strip HTML tags for cleaner text matching
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
-    // FlexMLS listing detail page has price and address in specific patterns
-    const price = parseFloat(
-      (html.match(/\$([0-9,]+)\s*(?:List Price|Price|Asking)/i)?.[1] || '').replace(/,/g, '')
-    ) || parseFloat(
-      (html.match(/list[_\s-]?price[^0-9$]*\$?([0-9,]+)/i)?.[1] || '').replace(/,/g, '')
-    ) || 0;
+    // Price — multiple patterns FlexMLS uses
+    const priceStr =
+      text.match(/List\s*Price[^0-9$]*\$?\s*([0-9,]+)/i)?.[1] ||
+      text.match(/Listing\s*Price[^0-9$]*\$?\s*([0-9,]+)/i)?.[1] ||
+      text.match(/Price[^0-9$]*\$\s*([0-9,]+)/i)?.[1] ||
+      html.match(/itemprop="price"[^>]*content="([0-9.]+)"/i)?.[1] ||
+      html.match(/\$([0-9,]{6,})/)?.[1] || '';
+    const price = Number(priceStr.replace(/,/g, '')) || 0;
 
-    const addrMatch = html.match(/(\d+\s+[A-Z][a-zA-Z\s]+(?:St|Ave|Rd|Dr|Ln|Blvd|Ct|Way|Pl|Cir)[^,<"]*),?\s*([A-Za-z\s]+),?\s*(WI|IL|MN|IA)\s*(\d{5})/i);
-    const address = addrMatch ? `${addrMatch[1].trim()}, ${addrMatch[2].trim()}, ${addrMatch[3]} ${addrMatch[4]}` : '';
+    // Address — street + city + state + zip
+    const addrMatch =
+      text.match(/(\d+\s+[A-Za-z][a-zA-Z0-9\s]+(?:Street|Avenue|Road|Drive|Lane|Boulevard|Court|Way|Place|Circle|Trail|Terrace|Parkway|St|Ave|Rd|Dr|Ln|Blvd|Ct|Pl|Cir))[,\s]+([A-Za-z\s]{2,30})[,\s]+(WI|IL|MN|IA|IN|MI|OH|MO)\s+(\d{5})/i);
+    const address = addrMatch
+      ? `${addrMatch[1].trim()}, ${addrMatch[2].trim()}, ${addrMatch[3]} ${addrMatch[4]}`
+      : '';
 
-    const beds  = Number(html.match(/(\d+)\s*(?:Bed|BR|bed)/i)?.[1] || 0);
-    const baths = Number(html.match(/(\d*\.?\d+)\s*(?:Bath|BA|bath)/i)?.[1] || 0);
-    const sqft  = Number((html.match(/([0-9,]+)\s*(?:sq\.?\s*ft|sqft|square\s*feet)/i)?.[1] || '').replace(/,/g, '') || 0);
-    const year  = Number(html.match(/(?:Year Built|Built in|YR BUILT)[^\d]*(\d{4})/i)?.[1] || 0);
+    const beds  = Number(text.match(/(\d+)\s*(?:Bedrooms?|Beds?|BR)\b/i)?.[1] || 0);
+    const baths = Number(text.match(/(\d+\.?\d*)\s*(?:Bathrooms?|Baths?|BA)\b/i)?.[1] || 0);
+    const sqft  = Number((text.match(/([0-9,]+)\s*(?:Sq\.?\s*Ft\.?|SqFt|Square\s*Feet)\b/i)?.[1] || '').replace(/,/g, '') || 0);
+    const year  = Number(text.match(/(?:Year\s*Built|Yr\.?\s*Built|Built\s*In)[^\d]*(\d{4})/i)?.[1] || 0);
+    const taxRaw = text.match(/(?:Annual\s*Tax|Property\s*Tax|Taxes)[^\d]*\$?\s*([0-9,]+)/i)?.[1];
+    const taxAnnual = taxRaw ? Number(taxRaw.replace(/,/g, '')) : 0;
+
+    const typeRaw = text.match(/(?:Property\s*Type|Type)[^:]*:\s*([A-Za-z\s/-]+)/i)?.[1] || '';
+    const propertyType = typeRaw.toLowerCase().includes('duplex')   ? 'duplex'
+                       : typeRaw.toLowerCase().includes('multi')    ? 'duplex'
+                       : typeRaw.toLowerCase().includes('triplex')  ? 'triplex'
+                       : typeRaw.toLowerCase().includes('quadplex') ? 'fourplex'
+                       : typeRaw.toLowerCase().includes('4-plex')   ? 'fourplex'
+                       : 'duplex'; // default for their search
 
     if (!address && !price) return null;
-    return { address, price, beds, baths, sqft, yearBuilt: year };
+    const result = {};
+    if (address)     result.address      = address;
+    if (price)       result.price        = price;
+    if (beds)        result.beds         = beds;
+    if (baths)       result.baths        = baths;
+    if (sqft)        result.sqft         = sqft;
+    if (year)        result.yearBuilt    = year;
+    if (taxAnnual)   result.taxAnnual    = taxAnnual;
+    if (propertyType) result.propertyType = propertyType;
+    return result;
   } catch(e) { return null; }
 }
 
 function parseGenericMeta(html) {
   try {
-    const get = (re) => html.match(re)?.[1]?.trim();
-    const price = Number(get(/itemprop="price"\s+content="([^"]+)"/) ||
-                         get(/property="product:price:amount"\s+content="([^"]+)"/) || 0);
-    const desc  = get(/property="og:description"\s+content="([^"]+)"/);
-    if (!price) return null;
-    return { price, notes: desc ? desc.slice(0, 400) : '' };
+    const get  = (re) => html.match(re)?.[1]?.trim();
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+    const priceRaw = get(/itemprop="price"\s+content="([^"]+)"/) ||
+                     get(/property="product:price:amount"\s+content="([^"]+)"/) ||
+                     text.match(/(?:List\s*Price|Price)[^0-9$]*\$?\s*([0-9,]{6,})/i)?.[1];
+    const price = Number((priceRaw || '').replace(/,/g, '')) || 0;
+
+    const title = get(/property="og:title"\s+content="([^"]+)"/) || '';
+    const desc  = get(/property="og:description"\s+content="([^"]+)"/) || '';
+
+    // Try to pull beds/baths/sqft from og:description or title
+    const beds  = Number(desc.match(/(\d+)\s*(?:bed|br)\b/i)?.[1] || title.match(/(\d+)\s*(?:bed|br)\b/i)?.[1] || 0);
+    const baths = Number(desc.match(/(\d+\.?\d*)\s*(?:bath|ba)\b/i)?.[1] || title.match(/(\d+\.?\d*)\s*(?:bath|ba)\b/i)?.[1] || 0);
+    const sqft  = Number((desc.match(/([0-9,]+)\s*(?:sq\s*ft|sqft)/i)?.[1] || '').replace(/,/g, '') || 0);
+
+    const addrMatch = text.match(/(\d+\s+[A-Za-z][a-zA-Z0-9\s]+(?:St|Ave|Rd|Dr|Ln|Blvd|Ct|Way|Pl|Cir)[^,<"]*),?\s*([A-Za-z\s]{2,25}),?\s*(WI|IL|MN|IA|IN|MI)\s*(\d{5})/i);
+    const address = addrMatch ? `${addrMatch[1].trim()}, ${addrMatch[2].trim()}, ${addrMatch[3]} ${addrMatch[4]}` : '';
+
+    if (!price && !address) return null;
+    const result = {};
+    if (price)   result.price   = price;
+    if (address) result.address = address;
+    if (beds)    result.beds    = beds;
+    if (baths)   result.baths   = baths;
+    if (sqft)    result.sqft    = sqft;
+    if (desc)    result.notes   = desc.slice(0, 400);
+    return result;
   } catch(e) { return null; }
 }
 
@@ -1616,22 +1656,7 @@ function init() {
       return p;
     }
 
-    // ── PATH A: MLS feed / unknown link ──────────────────────────────────────
-    // Skip network attempt, go straight to modal — no blank property created
-    if (isMlsFeedUrl(url) || !isKnownListingSite(url)) {
-      const p = buildDefaults(url);
-      window._modalDraft = p;
-      el('modal-title').textContent = 'Enter Listing Details';
-      el('modal-sub').textContent   = `${platform} — couldn't auto-read, enter manually`;
-      fillModalStep0(p);
-      fillModalStep1(p);
-      state.modalStep = 0;
-      updateModalStepView();
-      show('modal-overlay');
-      return;
-    }
-
-    // ── PATH B: Zillow / Redfin / Realtor — optimistic render + background fetch
+    // ── All URLs: optimistic render immediately, then auto-fetch in background ──
     const p = buildDefaults(url);
     state.properties.unshift(p);
     save();
@@ -1656,14 +1681,16 @@ function init() {
           save();
           if (state.activeId === p.id) renderPropertyDetail();
           renderSidebar();
-          showToast(`✓ Listing loaded from ${platform}!`);
+          showToast(`Listing loaded from ${platform}!`);
         }
       } else {
-        // Fetch returned nothing — open modal to edit the blank property
-        openModal(url, p.id);
+        // Couldn't read — property card is already showing with quick-fill panel
+        showToast(`Couldn't auto-read ${platform} — enter details in the card below`, 'warn');
+        if (state.activeId === p.id) renderPropertyDetail();
       }
     } catch(e) {
-      openModal(url, p.id);
+      showToast(`Couldn't auto-read ${platform} — enter details in the card below`, 'warn');
+      if (state.activeId === p.id) renderPropertyDetail();
     } finally {
       if (badge) badge.classList.add('hidden');
       el('analyze-btn').disabled = false;
